@@ -4,6 +4,19 @@ All notable changes to the project will be documented in this file.
 
 ---
 
+## [v1.7] - 2026
+### Fixed
+* Windows 7 launch crash caused by `[ordered]` hashtable (unsupported on PowerShell 2.0).
+* Broken Smartctl installer — SourceForge `latest/download` link served an HTML page instead of the actual exe.
+* DISM cleanup progress bar not visually reaching 100% after completion.
+
+### Added
+* Self-update system: checks GitHub Releases, shows changelog, downloads and restarts automatically.
+* First-run prompt to enable/disable automatic update checks.
+* Settings: manual "check for updates now" option and auto-update toggle.
+
+---
+
 ## [v1.6] - 2026
 ### Added
 * New **Tests & Diagnostics** section (Fastfetch, Smartctl).
