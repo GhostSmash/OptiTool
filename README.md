@@ -6,20 +6,6 @@
 
 OptiTool is a lightweight, modular PowerShell utility for optimizing, cleaning, and diagnosing Windows 10 and 11 — all through a simple console menu.
 
-### 🖼️ Screenshots
-
-<p align="center">
-  <img src="assets/main-menu-en.png" alt="English Main Menu" width="700"/>
-  <br/>
-  <i>Main Interface (English)</i>
-</p>
-
-<p align="center">
-  <img src="assets/features-en.png" alt="English Features Preview" width="700"/>
-  <br/>
-  <i>Diagnostics & Tools Preview</i>
-</p>
-
 ### 💻 Requirements
 * **OS:** Windows 10 or 11
 * **Environment:** PowerShell 5.1+
@@ -55,20 +41,6 @@ OptiTool is a lightweight, modular PowerShell utility for optimizing, cleaning, 
 
 OptiTool — это небольшая и удобная утилита на PowerShell для настройки, очистки и диагностики Windows 10 и 11. Всё работает через понятное консольное меню.
 
-### 🖼️ Скриншоты
-
-<p align="center">
-  <img src="assets/main-menu-ru.png" alt="Главное меню на русском" width="700"/>
-  <br/>
-  <i>Главный интерфейс (Русский язык)</i>
-</p>
-
-<p align="center">
-  <img src="assets/features-ru.png" alt="Раздел утилит и очистки" width="700"/>
-  <br/>
-  <i>Раздел диагностики и утилит</i>
-</p>
-
 ### 💻 Что нужно для запуска
 * **ОС:** Windows 10 или 11
 * **Среда:** PowerShell 5.1+
@@ -97,6 +69,39 @@ OptiTool — это небольшая и удобная утилита на Pow
 * **Сторонние утилиты:** Инструменты вроде **Speedtest**, **Fastfetch**, **Smartctl**, **Sysinternals** и софт **не хранятся** в репозитории. Скрипт качает их с официальных сайтов только тогда, когда ты сам выбираешь их в меню.
 * **Активация (MAS):** Скрипт лишь даёт быстрый доступ к [Massgrave (MAS)](https://github.com/massgravel/Microsoft-Activation-Scripts) — это сторонний проект, весь код активации принадлежит их авторам.
 * **AIDA64:** Бесплатный 30-дневный триал. В основном полезна для первичного стресс-теста и проверки датчиков.
+
+---
+
+## 🖼️ Screenshots / Галерея скриншотов
+
+<p align="center">
+  <img src="assets/1.png" alt="Main Menu EN" width="700"/>
+  <br/><b>1. Main Menu / Главное меню (EN)</b><br/><br/>
+  
+  <img src="assets/2.png" alt="Main Menu RU" width="700"/>
+  <br/><b>2. Main Menu / Главное меню (RU)</b><br/><br/>
+
+  <img src="assets/3.png" alt="Performance & Power" width="700"/>
+  <br/><b>3. Performance & Power / Быстродействие и питание</b><br/><br/>
+
+  <img src="assets/4.png" alt="Disk Cleanup & S.M.A.R.T." width="700"/>
+  <br/><b>4. Disk Cleanup & S.M.A.R.T. / Очистка и S.M.A.R.T.</b><br/><br/>
+
+  <img src="assets/5.png" alt="Network & Speedtest" width="700"/>
+  <br/><b>5. Network & Diagnostics / Сеть и пинг-тест</b><br/><br/>
+
+  <img src="assets/6.png" alt="Advanced & DISM" width="700"/>
+  <br/><b>6. Advanced Section / Продвинутые инструменты (DISM/MAS)</b><br/><br/>
+
+  <img src="assets/7.png" alt="Software Downloads" width="700"/>
+  <br/><b>7. Software Center / Быстрое скачивание софта</b><br/><br/>
+
+  <img src="assets/8.png" alt="Diagnostics Tools" width="700"/>
+  <br/><b>8. Diagnostics (Fastfetch / Smartctl / Sysinternals)</b><br/><br/>
+
+  <img src="assets/9.png" alt="Mini Games" width="700"/>
+  <br/><b>9. Rest Section / Мини-игры (Snake)</b><br/>
+</p>
 
 ---
 
