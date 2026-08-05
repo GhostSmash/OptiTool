@@ -36,8 +36,8 @@ OptiTool is a lightweight, modular PowerShell utility for optimizing, cleaning, 
 * **Bloatware Removal:** Quickly remove built-in clutter (Xbox, Weather, News, etc.).
 
 <p align="center">
-  <img src="assets/disk_health_ru.png" alt="Disk Health RU" width="700"/>
-  <br/><b>[RU] Здоровье диска / S.M.A.R.T.</b>
+  <img src="assets/disk_health_en.png" alt="Disk Health EN" width="700"/>
+  <br/><b>[EN] Disk health / S.M.A.R.T.</b>
 </p>
 
 * **Other menu:** All extra tools grouped in one place —
@@ -50,8 +50,8 @@ OptiTool is a lightweight, modular PowerShell utility for optimizing, cleaning, 
   * **Rest:** Snake (WASD or Arrow keys), Guess the Number, Clicker (with upgrades and a save file), and a CPS test.
 
 <p align="center">
-  <img src="assets/other_menu_ru.png" alt="Other menu RU" width="700"/>
-  <br/><b>[RU] Меню «Прочее»</b>
+  <img src="assets/other_menu_en.png" alt="Other menu EN" width="700"/>
+  <br/><b>[EN] Other menu</b>
 </p>
 
 * **Self-Update:** Checks all GitHub Releases (not just the latest), shows each version's own changelog, downloads and restarts on its own.
@@ -98,8 +98,8 @@ OptiTool — это небольшая и удобная утилита на Pow
 * **Удаление блоатвера:** Быстрый снос встроенного мусора (Xbox, Погода, Новости и т.д.).
 
 <p align="center">
-  <img src="assets/disk_health_en.png" alt="Disk Health EN" width="700"/>
-  <br/><b>[EN] Disk health / S.M.A.R.T.</b>
+  <img src="assets/disk_health_ru.png" alt="Disk Health RU" width="700"/>
+  <br/><b>[RU] Здоровье диска / S.M.A.R.T.</b>
 </p>
 
 * **Меню «Прочее»:** Все дополнительные инструменты в одном месте —
@@ -112,8 +112,8 @@ OptiTool — это небольшая и удобная утилита на Pow
   * **Отдых:** Змейка (WASD или стрелки), Угадай число, Кликер (с прокачкой и сохранением) и тест КПС.
 
 <p align="center">
-  <img src="assets/other_menu_en.png" alt="Other menu EN" width="700"/>
-  <br/><b>[EN] Other menu</b>
+  <img src="assets/other_menu_ru.png" alt="Other menu RU" width="700"/>
+  <br/><b>[RU] Меню «Прочее»</b>
 </p>
 
 * **Самообновление:** Проверяет ВСЕ релизы на GitHub (а не только последний), показывает changelog каждой версии, скачивает и перезапускается сам.
