@@ -2,26 +2,37 @@
 #  OPTIMIZATION TOOL
 #  Developer / Разработчик: github.com/ghostsmash
 # =====================================================
+#
+#  FILE MAP / КАРТА ФАЙЛА (search for these markers):
+#  ----------------------------------------------------
+#  CONFIG & CORE       - Global config, language dictionary, Get-ThemeColor, Write-Log
+#  WINDOWS VERSION      - Test-WindowsVersion, Get-WindowsEditionInfo
+#  WELCOME / ARCH       - Show-Welcome, Show-ArchSelect, first-run flow
+#  MAIN MENU            - Show-MainMenu (top-level routing, all letters/numbers)
+#  SETTINGS (9)         - Show-SettingsMenu, Show-ColorMenu, Show-Changelog
+#  PERFORMANCE (1)      - Show-PerformanceMenu, Show-PowerPlanMenu
+#  STARTUP (2)          - Show-StartupMenu, RUN/STARTUP/TASK sources
+#  DISK (3)             - Show-DiskMenu, Show-DiskHealthMenu (S.M.A.R.T.)
+#  PRIVACY (4)          - Show-PrivacyMenu
+#  SYSTEM INFO (5)      - Show-SystemInfo, CPU/GPU details, live snapshot
+#  EXPORT REPORT (6)    - Show-ExportReport
+#  NETWORK (7)          - Show-NetworkMenu, ping/speedtest/adapters
+#  BLOATWARE (8)        - Show-BloatwareMenu
+#  POWER (P)            - Show-PowerMenu (shutdown/restart/lock)
+#  ADVANCED (D)         - Show-AdvancedMenu (DISM, pagefile, hibernate, MAS)
+#  REST (R)             - Show-RestMenu (mini-games)
+#  DIAGNOSTICS (T)      - Show-DiagnosticsMenu (Fastfetch, Smartctl, Sysinternals)
+#  SOFTWARE (S)         - Show-SoftwareMenu (Chrome, Firefox, benchmarks, etc.)
+#  SYSTEM TOOLS (M)     - Show-SystemToolsMenu (msc shortcuts, Safe Mode)
+#  EDITION INFO (E)     - Show-EditionMenu (edition/LTSC/Win11 tweaks)
+#  SELF-UPDATE           - Invoke-UpdateCheck, Invoke-UpdateDownload
+#  ENTRY POINT           - bottom of file, script execution starts here
+#  ----------------------------------------------------
+#
+# =====================================================
 
-$Host.UI.RawUI.WindowTitle = "Optimization Tool"
-$ErrorActionPreference = "SilentlyContinue"
-$ProgressPreference = "SilentlyContinue"
-
-# --- Глобальные настройки (сохраняются в config.json рядом со скриптом) ---
-$ScriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
-$ConfigPath = Join-Path $ScriptDir "config.json"
-$LogPath    = Join-Path $ScriptDir "debug_log.txt"
-
-$Global:Config = [ordered]@{
-    Language     = "EN"      # EN / RU
-    Architecture = "AUTO"    # 32 / 64 / AUTO
-    Color        = "Green"   # Green / Cyan / Yellow / Orange / White
-    DebugLogs    = $false
-    FirstRun     = $true
-    AdvancedAccepted = $false
-}
-
-# --- Проверка версии Windows (работает даже на PowerShell 2.0) ---
+# --- Проверка версии Windows выполняется САМОЙ ПЕРВОЙ, до любых обращений к $Host.UI ---
+# --- Windows version check runs FIRST, before any $Host.UI access (Win7/PS2.0 safety) ---
 function Test-WindowsVersion {
     $osVersion = [System.Environment]::OSVersion.Version
     # Windows 10 = 10.0, Windows 11 тоже определяется как 10.0 (build 22000+)
@@ -48,6 +59,67 @@ function Test-WindowsVersion {
         Write-Host ""
         Read-Host "  >" | Out-Null
     }
+}
+
+# Проверка версии выполняется здесь же, максимально рано в файле
+Test-WindowsVersion
+
+# --- Безопасная настройка хоста: на некоторых Win7/PS2.0 конфигурациях
+#     обращение к $Host.UI.RawUI может вызывать Access Denied (0x80070005),
+#     поэтому оборачиваем в try/catch и не даём этому остановить скрипт ---
+try { $Host.UI.RawUI.WindowTitle = "Optimization Tool" } catch { }
+$ErrorActionPreference = "SilentlyContinue"
+try { $ProgressPreference = "SilentlyContinue" } catch { }
+
+# --- Глобальные настройки (сохраняются в config.json рядом со скриптом) ---
+$ScriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
+$ConfigPath = Join-Path $ScriptDir "config.json"
+$LogPath    = Join-Path $ScriptDir "debug_log.txt"
+
+$Global:AppVersion = "2.0"
+
+$Global:Config = @{
+    Language     = "EN"      # EN / RU
+    Architecture = "AUTO"    # 32 / 64 / AUTO
+    Color        = "Green"   # Green / Cyan / Yellow / Orange / White
+    DebugLogs    = $false
+    FirstRun     = $true
+    AdvancedAccepted = $false
+    AutoUpdateCheck = $true
+}
+
+# --- Определение редакции и особенностей Windows ---
+$Global:WinEdition = $null
+
+function Get-WindowsEditionInfo {
+    if ($Global:WinEdition) { return $Global:WinEdition }
+
+    $caption = (Get-CimInstance Win32_OperatingSystem -ErrorAction SilentlyContinue).Caption
+    $editionId = (Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" -Name "EditionID" -ErrorAction SilentlyContinue).EditionID
+    $buildNumber = (Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" -Name "CurrentBuildNumber" -ErrorAction SilentlyContinue).CurrentBuildNumber
+    $displayVersion = (Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion" -Name "DisplayVersion" -ErrorAction SilentlyContinue).DisplayVersion
+
+    $isWin11 = ([int]$buildNumber -ge 22000)
+    $isLTSC = ($editionId -match "LTSC|Enterprise.*LTS")
+    $isHome = ($editionId -match "^Core")
+    $isPro = ($editionId -match "^Professional")
+    $isEnterprise = ($editionId -match "^Enterprise" -and -not $isLTSC)
+    $isEducation = ($editionId -match "^Education")
+
+    $Global:WinEdition = [PSCustomObject]@{
+        Caption        = $caption
+        EditionID      = $editionId
+        BuildNumber    = $buildNumber
+        DisplayVersion = $displayVersion
+        IsWin11        = $isWin11
+        IsLTSC         = $isLTSC
+        IsHome         = $isHome
+        IsPro          = $isPro
+        IsEnterprise   = $isEnterprise
+        IsEducation    = $isEducation
+        HasGroupPolicy = (-not $isHome)
+    }
+    return $Global:WinEdition
 }
 
 function Show-ResponsibilityDisclaimer {
@@ -133,9 +205,11 @@ $T = @{
         M7            = "Network"
         M8            = "Remove bloatware"
         MP            = "Power (Shutdown/Restart)"
+        MOther        = "Other / Additional"
         M9            = "Settings"
         M0            = "Exit"
         PressEnter    = "Press Enter to continue..."
+        Done          = "Done."
         InvalidChoice = "Invalid choice, try again."
         SettingsTitle = "SETTINGS"
         S1            = "Language"
@@ -148,6 +222,22 @@ $T = @{
         Back          = "Back"
         On            = "ON"
         Off           = "OFF"
+        AutoUpdateQuestion = "Do you want automatic update checks on every script launch? (You can enable this later in Settings if you turn it off, or just download from GitHub manually.)"
+        S5            = "Auto-update check"
+        S6            = "Architecture"
+        S7            = "Reset Advanced disclaimer"
+        S8            = "Version history"
+        S9            = "Check for updates now"
+        SV            = "Current version info"
+        CheckingUpdate = "Checking for updates..."
+        UpdateAvailable = "A new version is available:"
+        UpdateNone    = "You are running the latest version."
+        UpdateConfirm = "Download and install now? (Y/N)"
+        Downloading   = "Downloading..."
+        UpdateDone    = "Update complete. Restarting..."
+        DoneRestart   = "Done. Restart required."
+        DoneRelogin   = "Done. Re-login may be required."
+        DoneReinstall = "Done. (Can be reinstalled from Store later)"
     }
     RU = @{
         Welcome       = "Добро пожаловать в Optimization Tool"
@@ -169,9 +259,11 @@ $T = @{
         M7            = "Сеть"
         M8            = "Удаление bloatware"
         MP            = "Питание (Выкл/Перезагрузка)"
+        MOther        = "Прочее / Доп. функции"
         M9            = "Настройки"
         M0            = "Выход"
         PressEnter    = "Нажмите Enter для продолжения..."
+        Done          = "Готово."
         InvalidChoice = "Неверный выбор, попробуйте снова."
         SettingsTitle = "НАСТРОЙКИ"
         S1            = "Язык"
@@ -184,6 +276,22 @@ $T = @{
         Back          = "Назад"
         On            = "ВКЛ"
         Off           = "ВЫКЛ"
+        AutoUpdateQuestion = "Хотите автоматическую проверку обновлений при каждом запуске скрипта? (Эту настройку можно включить позже в Settings, если выключите, либо просто скачивать с GitHub вручную.)"
+        S5            = "Автопроверка обновлений"
+        S6            = "Разрядность"
+        S7            = "Сбросить подтверждение Advanced"
+        S8            = "История версий"
+        S9            = "Проверить обновления сейчас"
+        SV            = "Инфо о текущей версии"
+        CheckingUpdate = "Проверка обновлений..."
+        UpdateAvailable = "Доступна новая версия:"
+        UpdateNone    = "У вас установлена последняя версия."
+        UpdateConfirm = "Скачать и установить сейчас? (Y/N)"
+        Downloading   = "Скачивание..."
+        UpdateDone    = "Обновление завершено. Перезапуск..."
+        DoneRestart   = "Готово. Требуется перезагрузка."
+        DoneRelogin   = "Готово. Может потребоваться перезаход."
+        DoneReinstall = "Готово. (Можно переустановить из Store позже)"
     }
 }
 
@@ -224,6 +332,15 @@ function Show-Welcome {
         default { $Global:Config.Language = "EN" }
     }
     Write-Log "Language selected: $($Global:Config.Language)"
+
+    Show-Header (L "MainMenuTitle")
+    Write-Host "  $(L 'AutoUpdateQuestion')"
+    Write-Host ""
+    Write-Host "  Y / N"
+    Write-Host ""
+    $updateChoice = Read-Host "  >"
+    $Global:Config.AutoUpdateCheck = ($updateChoice.ToUpper() -eq "Y")
+    Write-Log "Auto-update check set to: $($Global:Config.AutoUpdateCheck)"
 }
 
 function Show-ArchSelect {
@@ -253,10 +370,8 @@ function Show-MainMenu {
         Write-Host ("  3. {0,-27} 7. {1}" -f (L "M3"), (L "M7"))
         Write-Host ("  4. {0,-27} 8. {1}" -f (L "M4"), (L "M8"))
         Write-Host ""
-        Write-Host ("  9. {0,-27} P. {1}" -f (L 'M9'), (L 'MP'))
-        Write-Host ("  0. {0,-27} D. {1}" -f (L 'M0'), "Advanced / Для разработчиков")
-        Write-Host ("     {0,-27} R. {1}" -f "", "Rest / Отдых")
-        Write-Host ("     {0,-27} T. {1}" -f "", "Tests & Diagnostics / Тесты и диагностика")
+        Write-Host ("  9. {0,-27} 0. {1}" -f (L 'M9'), (L 'M0'))
+        Write-Host "  O. $(L 'MOther')"
         Write-Host ""
         $choice = Read-Host "  >"
         Write-Log "Main menu choice: $choice"
@@ -270,10 +385,7 @@ function Show-MainMenu {
             "7" { Show-NetworkMenu }
             "8" { Show-BloatwareMenu }
             "9" { Show-SettingsMenu }
-            "P" { Show-PowerMenu }
-            "D" { Show-AdvancedMenu }
-            "R" { Show-RestMenu }
-            "T" { Show-DiagnosticsMenu }
+            "O" { Show-OtherMenu }
             "0" { Save-Config; exit }
             default {
                 Write-Host ""
@@ -294,14 +406,18 @@ function Show-SettingsMenu {
         Write-Host "  2. $(L 'S2'): $dbg"
         Write-Host "  3. $(L 'S3'): $($Global:Config.Color)"
         Write-Host "  4. $(L 'S4')"
-        Write-Host "  5. Architecture: $($Global:Config.Architecture)-bit"
-        Write-Host "  6. Reset Advanced disclaimer / Сбросить подтверждение Advanced"
-        Write-Host "  7. Version history / История версий"
+        Write-Host "  5. $(L 'S6'): $($Global:Config.Architecture)-bit"
+        Write-Host "  6. $(L 'S7')"
+        Write-Host "  7. $(L 'S8')"
+        $autoUpdMark = if ($Global:Config.AutoUpdateCheck) { "[v]" } else { "[x]" }
+        Write-Host "  8. $(L 'S5'): $autoUpdMark"
+        Write-Host "  9. $(L 'S9')"
+        Write-Host "  V. $(L 'SV')"
         Write-Host ""
         Write-Host "  0. $(L 'S0')"
         Write-Host ""
         $choice = Read-Host "  >"
-        switch ($choice) {
+        switch ($choice.ToUpper()) {
             "1" {
                 $Global:Config.Language = if ($Global:Config.Language -eq "EN") { "RU" } else { "EN" }
                 Save-Config
@@ -317,10 +433,16 @@ function Show-SettingsMenu {
             "6" {
                 $Global:Config.AdvancedAccepted = $false
                 Save-Config
-                Write-Host "  Done. / Готово." -ForegroundColor Green
+                Write-Host "  $(L 'Done')" -ForegroundColor Green
                 Start-Sleep -Seconds 1
             }
             "7" { Show-Changelog }
+            "8" {
+                $Global:Config.AutoUpdateCheck = -not $Global:Config.AutoUpdateCheck
+                Save-Config
+            }
+            "9" { Invoke-UpdateCheck -Manual $true }
+            "V" { Show-CurrentVersionInfo }
             "0" { Save-Config; return }
             default {
                 Write-Host "  $(L 'InvalidChoice')" -ForegroundColor Red
@@ -359,66 +481,274 @@ function Show-Contributors {
     Read-Host | Out-Null
 }
 
+function Show-CurrentVersionInfo {
+    Show-Header "Current Version"
+    if ($Global:Config.Language -eq "RU") {
+        Write-Host "  У вас установлена версия: v$Global:AppVersion" -ForegroundColor (Get-ThemeColor)
+        Write-Host ""
+        Write-Host "  ------------------------------------------------" -ForegroundColor DarkGray
+        Write-Host "  Что нового в этой версии:"
+        Write-Host "  ------------------------------------------------" -ForegroundColor DarkGray
+        Write-Host "  1. Исправлен сбой запуска на Windows 7 ($Host.UI Access Denied до проверки версии)"
+        Write-Host "  2. Полный перевод без слэшей: Настройки и весь Changelog (RU/EN раздельно)"
+        Write-Host "  3. Все сообщения 'Готово' теперь тоже переведены раздельно, без слэша"
+        Write-Host ""
+        Write-Host "  Полная история: Настройки -> 7. История версий"
+    } else {
+        Write-Host "  You are running: v$Global:AppVersion" -ForegroundColor (Get-ThemeColor)
+        Write-Host ""
+        Write-Host "  ------------------------------------------------" -ForegroundColor DarkGray
+        Write-Host "  What's new in this version:"
+        Write-Host "  ------------------------------------------------" -ForegroundColor DarkGray
+        Write-Host "  1. Fixed Windows 7 launch crash ($Host.UI Access Denied before version check)"
+        Write-Host "  2. Full slash-free translation: Settings and the entire Changelog (RU/EN separate)"
+        Write-Host "  3. All 'Done' messages now also translated separately, no more slashes"
+        Write-Host ""
+        Write-Host "  See full history: Settings -> 7. Version history"
+    }
+    Write-Host ""
+    Write-Host "  $(L 'PressEnter')"
+    Read-Host | Out-Null
+}
+
 function Show-Changelog {
-    Show-Header "Version History / История версий"
+    if ($Global:Config.Language -eq "RU") {
+        Show-Header "История версий"
 
-    Write-Host "  v1.0" -ForegroundColor (Get-ThemeColor)
-    Write-Host "  ------------------------------------------------"
-    Write-Host "  1. Initial menu structure: language, architecture select"
-    Write-Host "  2. Performance, Startup, Disk, Privacy sections"
-    Write-Host "  3. Basic Settings (language, debug logs, color)"
-    Write-Host ""
+        Write-Host "  v1.0" -ForegroundColor (Get-ThemeColor)
+        Write-Host "  ------------------------------------------------"
+        Write-Host "  1. Первая структура меню: выбор языка, разрядности"
+        Write-Host "  2. Разделы Быстродействие, Автозагрузка, Диск, Приватность"
+        Write-Host "  3. Базовые настройки (язык, debug-логи, цвет)"
+        Write-Host ""
 
-    Write-Host "  v1.1" -ForegroundColor (Get-ThemeColor)
-    Write-Host "  ------------------------------------------------"
-    Write-Host "  1. Fixed encoding/BOM and launcher path issues"
-    Write-Host "  2. Startup manager: toggle RUN / STARTUP folder / Task Scheduler"
-    Write-Host "  3. Windows version check warning (10/11 only)"
-    Write-Host ""
+        Write-Host "  v1.1" -ForegroundColor (Get-ThemeColor)
+        Write-Host "  ------------------------------------------------"
+        Write-Host "  1. Исправлены проблемы с кодировкой/BOM и путём запуска"
+        Write-Host "  2. Менеджер автозагрузки: RUN / папка STARTUP / Планировщик задач"
+        Write-Host "  3. Предупреждение при проверке версии Windows (только 10/11)"
+        Write-Host ""
 
-    Write-Host "  v1.2" -ForegroundColor (Get-ThemeColor)
-    Write-Host "  ------------------------------------------------"
-    Write-Host "  1. Network section: adapters, ping by country, speedtest (Ookla CLI)"
-    Write-Host "  2. Power menu: shutdown/restart with timer and message templates"
-    Write-Host "  3. System Info: summary, drivers, live CPU/RAM snapshot"
-    Write-Host "  4. Bloatware removal list"
-    Write-Host ""
+        Write-Host "  v1.2" -ForegroundColor (Get-ThemeColor)
+        Write-Host "  ------------------------------------------------"
+        Write-Host "  1. Раздел Сеть: адаптеры, пинг по странам, speedtest (Ookla CLI)"
+        Write-Host "  2. Меню питания: выключение/перезагрузка с таймером и сообщением"
+        Write-Host "  3. Инфо о системе: сводка, драйверы, снэпшот CPU/RAM"
+        Write-Host "  4. Список удаления bloatware"
+        Write-Host ""
 
-    Write-Host "  v1.3" -ForegroundColor (Get-ThemeColor)
-    Write-Host "  ------------------------------------------------"
-    Write-Host "  1. Real toggle system [v]/[x] with color and 'not recommended' hints"
-    Write-Host "  2. Power plan submenu, background UWP apps manager (enable/disable all)"
-    Write-Host "  3. Disk health / S.M.A.R.T. with multi-disk selection"
-    Write-Host "  4. Expanded export report and live snapshot (top processes, page file)"
-    Write-Host "  5. Speedtest simplified to direct native output (no flicker)"
-    Write-Host ""
+        Write-Host "  v1.3" -ForegroundColor (Get-ThemeColor)
+        Write-Host "  ------------------------------------------------"
+        Write-Host "  1. Настоящие переключатели [v]/[x] с цветом и подсказкой 'не рекомендуется'"
+        Write-Host "  2. Подменю плана питания, менеджер фоновых UWP-приложений (включить/выключить все)"
+        Write-Host "  3. Здоровье диска / S.M.A.R.T. с выбором из нескольких дисков"
+        Write-Host "  4. Расширенный отчёт и снэпшот (топ процессов, файл подкачки)"
+        Write-Host "  5. Speedtest упрощён до прямого родного вывода (без мерцания)"
+        Write-Host ""
 
-    Write-Host "  v1.4" -ForegroundColor (Get-ThemeColor)
-    Write-Host "  ------------------------------------------------"
-    Write-Host "  1. Advanced section: DISM cleanup, paging file, hibernation, WinSxS size"
-    Write-Host "  2. Responsibility disclaimer on first run"
-    Write-Host "  3. MAS Activator integration (Advanced section)" -ForegroundColor Yellow
-    Write-Host ""
+        Write-Host "  v1.4" -ForegroundColor (Get-ThemeColor)
+        Write-Host "  ------------------------------------------------"
+        Write-Host "  1. Раздел Advanced: очистка DISM, файл подкачки, гибернация, размер WinSxS"
+        Write-Host "  2. Отказ от ответственности при первом запуске"
+        Write-Host "  3. Интеграция MAS-активатора (раздел Advanced)" -ForegroundColor Yellow
+        Write-Host ""
 
-    Write-Host "  v1.5" -ForegroundColor (Get-ThemeColor)
-    Write-Host "  ------------------------------------------------"
-    Write-Host "  1. Y/N confirmation style across all prompts"
-    Write-Host "  2. Fixed bloatware 'already removed' false success message"
-    Write-Host "  3. Advanced disclaimer: one-time, red color, resettable in Settings"
-    Write-Host "  4. Fixed hibernation toggle logic and live status refresh"
-    Write-Host "  5. CPU / GPU detailed info sections"
-    Write-Host "  6. Rest section: Guess the Number and Snake games"
-    Write-Host ""
+        Write-Host "  v1.5" -ForegroundColor (Get-ThemeColor)
+        Write-Host "  ------------------------------------------------"
+        Write-Host "  1. Стиль подтверждения Y/N во всех запросах"
+        Write-Host "  2. Исправлено ложное сообщение об успехе при удалении несуществующего bloatware"
+        Write-Host "  3. Advanced-предупреждение: разовое, красный цвет, сброс в настройках"
+        Write-Host "  4. Исправлена логика переключения гибернации и обновление статуса"
+        Write-Host "  5. Подробная инфо о CPU / GPU"
+        Write-Host "  6. Раздел Отдых: игры Угадай число и Змейка"
+        Write-Host ""
 
-    Write-Host "  v1.6" -ForegroundColor (Get-ThemeColor)
-    Write-Host "  ------------------------------------------------"
-    Write-Host "  1. Tests & Diagnostics section (Fastfetch, Smartctl, Autorunsc, Handle, AccessChk)"
-    Write-Host "  2. Version history / changelog viewer in Settings"
-    Write-Host ""
+        Write-Host "  v1.6" -ForegroundColor (Get-ThemeColor)
+        Write-Host "  ------------------------------------------------"
+        Write-Host "  1. Раздел Тесты и диагностика (Fastfetch, Smartctl, Autorunsc, Handle, AccessChk)"
+        Write-Host "  2. Просмотр истории версий/changelog в настройках"
+        Write-Host ""
 
-    Write-Host "  ------------------------------------------------" -ForegroundColor DarkGray
-    Write-Host "  Built by / Собрано: Claude (Anthropic)" -ForegroundColor (Get-ThemeColor)
-    Write-Host "  MAS Activator addition / Добавление MAS: Gemini (Google)" -ForegroundColor Yellow
+        Write-Host "  v1.7" -ForegroundColor (Get-ThemeColor)
+        Write-Host "  ------------------------------------------------"
+        Write-Host "  1. Исправлен сбой запуска на Windows 7 ([ordered] не поддерживается на PS 2.0)"
+        Write-Host "  2. Исправлен битый установщик Smartctl (ссылка SourceForge отдавала HTML вместо exe)"
+        Write-Host "  3. Исправлен прогресс-бар очистки DISM, не доходивший до 100% визуально"
+        Write-Host "  4. Система самообновления: проверка GitHub Releases, changelog, скачивание и перезапуск"
+        Write-Host "  5. Запрос при первом запуске о включении автопроверки обновлений"
+        Write-Host "  6. Настройки: ручная проверка обновлений и переключатель автообновления"
+        Write-Host ""
+
+        Write-Host "  v1.8" -ForegroundColor (Get-ThemeColor)
+        Write-Host "  ------------------------------------------------"
+        Write-Host "  1. Раздел Software: быстрая загрузка Chrome, Firefox, Telegram, Viber, VLC, 7-Zip"
+        Write-Host "  2. Раздел System Tools: быстрый доступ к diskmgmt, services, devmgmt, regedit и др."
+        Write-Host "  3. Переключение безопасного режима при следующей загрузке (минимальный/с сетью)"
+        Write-Host "  4. Главное меню перебалансировано на две ровные колонки"
+        Write-Host "  5. Добавлен AIDA64 в раздел Software (стресс-тест/датчики, триал 30 дней)"
+        Write-Host ""
+
+        Write-Host "  v1.9" -ForegroundColor (Get-ThemeColor)
+        Write-Host "  ------------------------------------------------"
+        Write-Host "  1. Самообновление теперь показывает ВСЕ новые версии, а не только последнюю"
+        Write-Host "  2. Патч-версии (напр. 1.8.1) показываются с отступом под основной версией"
+        Write-Host "  3. Предупреждение при выборе не последней версии, с возможностью всё равно обновиться"
+        Write-Host "  4. Каждая версия показывает свой собственный changelog из GitHub Release"
+        Write-Host ""
+
+        Write-Host "  v1.9.1" -ForegroundColor (Get-ThemeColor)
+        Write-Host "  ------------------------------------------------"
+        Write-Host "  1. Новый раздел Инфо о редакции: определяет точную редакцию, сборку и версию"
+        Write-Host "  2. Организовано в подменю: Подробная инфо / Предупреждение о смене редакции / Твики"
+        Write-Host "  3. Исправление плашки 'управляется организацией', вызванной политиками LTSC"
+        Write-Host "  4. Home-редакция: альтернативы gpedit/Hyper-V/BitLocker вместо ошибок"
+        Write-Host "  5. Windows 11: классическое контекстное меню, отключение виджетов, отключение Copilot"
+        Write-Host ""
+
+        Write-Host "  v1.9.2" -ForegroundColor (Get-ThemeColor)
+        Write-Host "  ------------------------------------------------"
+        Write-Host "  1. Исправлено: статус гибернации всегда показывал зелёный (проверялся не тот файл)"
+        Write-Host "  2. Подтверждение MAS-активатора изменено с 1/0 на Y/N, теперь полностью двуязычное"
+        Write-Host "  3. Добавлена карта файла в начале скрипта для удобной навигации"
+        Write-Host ""
+
+        Write-Host "  v1.9.3" -ForegroundColor (Get-ThemeColor)
+        Write-Host "  ------------------------------------------------"
+        Write-Host "  1. Главное меню упрощено: буквенные разделы (P/D/R/T/S/M/E) объединены в 'Прочее'"
+        Write-Host "  2. Добавлен экран инфо о версии в настройках с показом текущей версии и её changelog"
+        Write-Host "  3. Змейка: выбор WASD или стрелок перед игрой"
+        Write-Host "  4. Новые игры: Кликер (прокачка, пассивный доход, сохранение) и Тест КПС"
+        Write-Host ""
+
+        Write-Host "  v2.0" -ForegroundColor (Get-ThemeColor)
+        Write-Host "  ------------------------------------------------"
+        Write-Host "  1. Исправлен сбой запуска на Windows 7 (доступ к $Host.UI перенесён после проверки версии)"
+        Write-Host "  2. Полный перевод без слэшей: раздел Настройки и весь Changelog переведены раздельно RU/EN"
+        Write-Host "  3. Все сообщения 'Готово' по всему скрипту теперь переведены раздельно, без слэша"
+        Write-Host ""
+
+        Write-Host "  ------------------------------------------------" -ForegroundColor DarkGray
+        Write-Host "  Собрано: Claude (Anthropic)" -ForegroundColor (Get-ThemeColor)
+        Write-Host "  Добавление MAS: Gemini (Google)" -ForegroundColor Yellow
+    } else {
+        Show-Header "Version History"
+
+        Write-Host "  v1.0" -ForegroundColor (Get-ThemeColor)
+        Write-Host "  ------------------------------------------------"
+        Write-Host "  1. Initial menu structure: language, architecture select"
+        Write-Host "  2. Performance, Startup, Disk, Privacy sections"
+        Write-Host "  3. Basic Settings (language, debug logs, color)"
+        Write-Host ""
+
+        Write-Host "  v1.1" -ForegroundColor (Get-ThemeColor)
+        Write-Host "  ------------------------------------------------"
+        Write-Host "  1. Fixed encoding/BOM and launcher path issues"
+        Write-Host "  2. Startup manager: toggle RUN / STARTUP folder / Task Scheduler"
+        Write-Host "  3. Windows version check warning (10/11 only)"
+        Write-Host ""
+
+        Write-Host "  v1.2" -ForegroundColor (Get-ThemeColor)
+        Write-Host "  ------------------------------------------------"
+        Write-Host "  1. Network section: adapters, ping by country, speedtest (Ookla CLI)"
+        Write-Host "  2. Power menu: shutdown/restart with timer and message templates"
+        Write-Host "  3. System Info: summary, drivers, live CPU/RAM snapshot"
+        Write-Host "  4. Bloatware removal list"
+        Write-Host ""
+
+        Write-Host "  v1.3" -ForegroundColor (Get-ThemeColor)
+        Write-Host "  ------------------------------------------------"
+        Write-Host "  1. Real toggle system [v]/[x] with color and 'not recommended' hints"
+        Write-Host "  2. Power plan submenu, background UWP apps manager (enable/disable all)"
+        Write-Host "  3. Disk health / S.M.A.R.T. with multi-disk selection"
+        Write-Host "  4. Expanded export report and live snapshot (top processes, page file)"
+        Write-Host "  5. Speedtest simplified to direct native output (no flicker)"
+        Write-Host ""
+
+        Write-Host "  v1.4" -ForegroundColor (Get-ThemeColor)
+        Write-Host "  ------------------------------------------------"
+        Write-Host "  1. Advanced section: DISM cleanup, paging file, hibernation, WinSxS size"
+        Write-Host "  2. Responsibility disclaimer on first run"
+        Write-Host "  3. MAS Activator integration (Advanced section)" -ForegroundColor Yellow
+        Write-Host ""
+
+        Write-Host "  v1.5" -ForegroundColor (Get-ThemeColor)
+        Write-Host "  ------------------------------------------------"
+        Write-Host "  1. Y/N confirmation style across all prompts"
+        Write-Host "  2. Fixed bloatware 'already removed' false success message"
+        Write-Host "  3. Advanced disclaimer: one-time, red color, resettable in Settings"
+        Write-Host "  4. Fixed hibernation toggle logic and live status refresh"
+        Write-Host "  5. CPU / GPU detailed info sections"
+        Write-Host "  6. Rest section: Guess the Number and Snake games"
+        Write-Host ""
+
+        Write-Host "  v1.6" -ForegroundColor (Get-ThemeColor)
+        Write-Host "  ------------------------------------------------"
+        Write-Host "  1. Tests & Diagnostics section (Fastfetch, Smartctl, Autorunsc, Handle, AccessChk)"
+        Write-Host "  2. Version history / changelog viewer in Settings"
+        Write-Host ""
+
+        Write-Host "  v1.7" -ForegroundColor (Get-ThemeColor)
+        Write-Host "  ------------------------------------------------"
+        Write-Host "  1. Fixed Windows 7 launch crash ([ordered] hashtable not supported on PS 2.0)"
+        Write-Host "  2. Fixed broken Smartctl installer (SourceForge latest-download link served HTML, not exe)"
+        Write-Host "  3. Fixed DISM cleanup progress bar not reaching 100% visually"
+        Write-Host "  4. Self-update system: checks GitHub Releases, shows changelog, downloads and restarts"
+        Write-Host "  5. First-run prompt for enabling/disabling automatic update checks"
+        Write-Host "  6. Settings: manual update check and auto-update toggle"
+        Write-Host ""
+
+        Write-Host "  v1.8" -ForegroundColor (Get-ThemeColor)
+        Write-Host "  ------------------------------------------------"
+        Write-Host "  1. New Software section: quick download of Chrome, Firefox, Telegram, Viber, VLC, 7-Zip"
+        Write-Host "  2. New System Tools section: quick access to diskmgmt, services, devmgmt, regedit, etc."
+        Write-Host "  3. Safe Mode toggle for next boot (minimal / with networking)"
+        Write-Host "  4. Main menu rebalanced into two even columns"
+        Write-Host "  5. Added AIDA64 to Software section (stress test / sensors, 30-day trial)"
+        Write-Host ""
+
+        Write-Host "  v1.9" -ForegroundColor (Get-ThemeColor)
+        Write-Host "  ------------------------------------------------"
+        Write-Host "  1. Self-update now lists ALL newer versions, not just the latest"
+        Write-Host "  2. Patch versions (e.g. 1.8.1) shown indented under their parent version"
+        Write-Host "  3. Warning shown when picking a non-latest version, with option to update anyway"
+        Write-Host "  4. Each version shows its own changelog from its GitHub Release"
+        Write-Host ""
+
+        Write-Host "  v1.9.1" -ForegroundColor (Get-ThemeColor)
+        Write-Host "  ------------------------------------------------"
+        Write-Host "  1. New Edition Info section: detects exact edition, build and version"
+        Write-Host "  2. Organized into Detailed Info / Change Edition warning / Tweaks submenus"
+        Write-Host "  3. Fix for 'managed by your organization' labels caused by LTSC policies"
+        Write-Host "  4. Home edition: gpedit/Hyper-V/BitLocker alternatives shown instead of errors"
+        Write-Host "  5. Windows 11: classic context menu, disable widgets, disable Copilot"
+        Write-Host ""
+
+        Write-Host "  v1.9.2" -ForegroundColor (Get-ThemeColor)
+        Write-Host "  ------------------------------------------------"
+        Write-Host "  1. Fixed hibernation status always showing green (was checking wrong file)"
+        Write-Host "  2. MAS Activator confirmation changed from 1/0 to Y/N, fully bilingual now"
+        Write-Host "  3. Added file map comments at the top of the script for easier navigation"
+        Write-Host ""
+
+        Write-Host "  v1.9.3" -ForegroundColor (Get-ThemeColor)
+        Write-Host "  ------------------------------------------------"
+        Write-Host "  1. Main menu simplified: all letter sections (P/D/R/T/S/M/E) merged into one 'Other' menu"
+        Write-Host "  2. Added Version Info screen in Settings showing current version and its changelog"
+        Write-Host "  3. Snake: choose WASD or Arrow keys before playing"
+        Write-Host "  4. New games: Clicker (upgrades + idle income + save file) and CPS Test"
+        Write-Host ""
+
+        Write-Host "  v2.0" -ForegroundColor (Get-ThemeColor)
+        Write-Host "  ------------------------------------------------"
+        Write-Host "  1. Fixed Windows 7 launch crash (moved $Host.UI access after version check)"
+        Write-Host "  2. Full slash-free translation: Settings section and entire Changelog now translated separately RU/EN"
+        Write-Host "  3. All 'Done' messages across the script now translated separately, no more slashes"
+        Write-Host ""
+
+        Write-Host "  ------------------------------------------------" -ForegroundColor DarkGray
+        Write-Host "  Built by: Claude (Anthropic)" -ForegroundColor (Get-ThemeColor)
+        Write-Host "  MAS Activator addition: Gemini (Google)" -ForegroundColor Yellow
+    }
     Write-Host ""
     Write-Host "  $(L 'PressEnter')"
     Read-Host | Out-Null
@@ -503,7 +833,7 @@ function Show-PerformanceMenu {
             "2" {
                 Set-ItemProperty -Path "HKCU:\Control Panel\Desktop" -Name "UserPreferencesMask" -Value ([byte[]](0x90,0x12,0x03,0x80,0x10,0x00,0x00,0x00)) -ErrorAction SilentlyContinue
                 Write-Log "Visual effects reduced"
-                Write-Host "  Done. Re-login may be required." -ForegroundColor Green
+                Write-Host "  $(L 'DoneRelogin')" -ForegroundColor Green
                 Write-Host ""
                 Write-Host "  $(L 'PressEnter')"
                 Read-Host | Out-Null
@@ -518,7 +848,7 @@ function Show-PerformanceMenu {
                     Start-Service -Name "SysMain" -ErrorAction SilentlyContinue
                     Write-Log "SysMain enabled"
                 }
-                Write-Host "  Done." -ForegroundColor Green
+                Write-Host "  $(L 'Done')" -ForegroundColor Green
                 Write-Host ""
                 Write-Host "  $(L 'PressEnter')"
                 Read-Host | Out-Null
@@ -531,7 +861,7 @@ function Show-PerformanceMenu {
                     Enable-ScheduledTask -TaskName "ScheduledDefrag" -TaskPath "\Microsoft\Windows\Defrag\" -ErrorAction SilentlyContinue | Out-Null
                     Write-Log "SSD defrag task enabled"
                 }
-                Write-Host "  Done." -ForegroundColor Green
+                Write-Host "  $(L 'Done')" -ForegroundColor Green
                 Write-Host ""
                 Write-Host "  $(L 'PressEnter')"
                 Read-Host | Out-Null
@@ -546,7 +876,7 @@ function Show-PerformanceMenu {
                     Start-Service -Name "WSearch" -ErrorAction SilentlyContinue
                     Write-Log "Windows Search indexing enabled"
                 }
-                Write-Host "  Done." -ForegroundColor Green
+                Write-Host "  $(L 'Done')" -ForegroundColor Green
                 Write-Host ""
                 Write-Host "  $(L 'PressEnter')"
                 Read-Host | Out-Null
@@ -979,7 +1309,7 @@ function Show-DiskMenu {
                 Remove-Item -Path "$env:TEMP\*" -Recurse -Force -ErrorAction SilentlyContinue
                 Remove-Item -Path "C:\Windows\Temp\*" -Recurse -Force -ErrorAction SilentlyContinue
                 Write-Log "Temp files cleaned"
-                Write-Host "  Done." -ForegroundColor Green
+                Write-Host "  $(L 'Done')" -ForegroundColor Green
                 Write-Host ""
                 Write-Host "  $(L 'PressEnter')"
                 Read-Host | Out-Null
@@ -989,7 +1319,7 @@ function Show-DiskMenu {
                 Remove-Item -Path "C:\Windows\SoftwareDistribution\Download\*" -Recurse -Force -ErrorAction SilentlyContinue
                 Start-Service -Name wuauserv -ErrorAction SilentlyContinue
                 Write-Log "Windows Update cache cleaned"
-                Write-Host "  Done." -ForegroundColor Green
+                Write-Host "  $(L 'Done')" -ForegroundColor Green
                 Write-Host ""
                 Write-Host "  $(L 'PressEnter')"
                 Read-Host | Out-Null
@@ -1000,7 +1330,7 @@ function Show-DiskMenu {
                     icacls "C:\Windows.old" /T /grant administrators:F | Out-Null
                     Remove-Item -Path "C:\Windows.old" -Recurse -Force -ErrorAction SilentlyContinue
                     Write-Log "Windows.old removed"
-                    Write-Host "  Done." -ForegroundColor Green
+                    Write-Host "  $(L 'Done')" -ForegroundColor Green
                 } else {
                     Write-Host "  Windows.old not found." -ForegroundColor Yellow
                 }
@@ -1009,7 +1339,7 @@ function Show-DiskMenu {
             "4" {
                 Clear-RecycleBin -Force -ErrorAction SilentlyContinue
                 Write-Log "Recycle bin emptied"
-                Write-Host "  Done." -ForegroundColor Green
+                Write-Host "  $(L 'Done')" -ForegroundColor Green
                 Write-Host ""
                 Write-Host "  $(L 'PressEnter')"
                 Read-Host | Out-Null
@@ -1051,7 +1381,7 @@ function Show-PrivacyMenu {
                 $newVal = if ($telemetryOn) { 0 } else { 1 }
                 Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Name "AllowTelemetry" -Value $newVal -ErrorAction SilentlyContinue
                 Write-Log "Telemetry set to $newVal"
-                Write-Host "  Done." -ForegroundColor Green
+                Write-Host "  $(L 'Done')" -ForegroundColor Green
                 Write-Host ""
                 Write-Host "  $(L 'PressEnter')"
                 Read-Host | Out-Null
@@ -1060,7 +1390,7 @@ function Show-PrivacyMenu {
                 $newVal = if ($adIdOn) { 0 } else { 1 }
                 Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo" -Name "Enabled" -Value $newVal -ErrorAction SilentlyContinue
                 Write-Log "Advertising ID set to $newVal"
-                Write-Host "  Done." -ForegroundColor Green
+                Write-Host "  $(L 'Done')" -ForegroundColor Green
                 Write-Host ""
                 Write-Host "  $(L 'PressEnter')"
                 Read-Host | Out-Null
@@ -1069,7 +1399,7 @@ function Show-PrivacyMenu {
                 $newVal = if ($tipsOn) { 0 } else { 1 }
                 Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" -Name "SoftLandingEnabled" -Value $newVal -ErrorAction SilentlyContinue
                 Write-Log "Windows tips set to $newVal"
-                Write-Host "  Done." -ForegroundColor Green
+                Write-Host "  $(L 'Done')" -ForegroundColor Green
                 Write-Host ""
                 Write-Host "  $(L 'PressEnter')"
                 Read-Host | Out-Null
@@ -1598,7 +1928,7 @@ function Ensure-SpeedtestCLI {
         Remove-Item -Path $zipPath -Force -ErrorAction SilentlyContinue
         Remove-Item -Path $extractPath -Recurse -Force -ErrorAction SilentlyContinue
         Write-Log "Speedtest CLI downloaded from official source"
-        Write-Host "  Done." -ForegroundColor Green
+        Write-Host "  $(L 'Done')" -ForegroundColor Green
         Start-Sleep -Seconds 1
         return $exePath
     } catch {
@@ -1653,7 +1983,7 @@ function Show-NetworkMenu {
             "1" {
                 ipconfig /flushdns | Out-Null
                 Write-Log "DNS cache flushed"
-                Write-Host "  Done." -ForegroundColor Green
+                Write-Host "  $(L 'Done')" -ForegroundColor Green
                 Write-Host ""
                 Write-Host "  $(L 'PressEnter')"
                 Read-Host | Out-Null
@@ -1663,7 +1993,7 @@ function Show-NetworkMenu {
                 netsh int ip reset | Out-Null
                 netsh winsock reset | Out-Null
                 Write-Log "TCP/IP stack reset"
-                Write-Host "  Done. Restart required." -ForegroundColor Green
+                Write-Host "  $(L 'DoneRestart')" -ForegroundColor Green
                 Write-Host ""
                 Write-Host "  $(L 'PressEnter')"
                 Read-Host | Out-Null
@@ -1769,7 +2099,7 @@ function Show-BloatwareMenu {
             }
             if ($foundPackage) {
                 Write-Log "Bloatware removed: $($app.Name)"
-                Write-Host "  Done. (Can be reinstalled from Store later)" -ForegroundColor Green
+                Write-Host "  $(L 'DoneReinstall')" -ForegroundColor Green
             } else {
                 Write-Host "  App is not installed. / Приложение не установлено." -ForegroundColor Yellow
             }
@@ -1905,30 +2235,38 @@ function Show-MasActivation {
     Write-Host "  █             ОТКАЗ ОТ ОТВЕТСТВЕННОСТИ                 █" -ForegroundColor Red
     Write-Host "  ████████████████████████████████████████████████████████" -ForegroundColor Red
     Write-Host ""
+    Write-Host "  You are about to run a third-party open-source tool (Microsoft Activation Scripts)." -ForegroundColor Yellow
     Write-Host "  Вы запускаете сторонний открытый инструмент (Microsoft Activation Scripts)." -ForegroundColor Yellow
+    Write-Host "  This script downloads directly from GitHub / get.activated.win."
     Write-Host "  Данный скрипт загружается напрямую из репозитория GitHub / get.activated.win."
+    Write-Host "  The developer of Optimization Tool is NOT responsible for the actions of this"
+    Write-Host "  third-party script, registry changes, or license status."
     Write-Host "  Разработчик Optimization Tool НЕ несёт ответственности за действия,"
     Write-Host "  выполняемые сторонним скриптом, изменения реестра или статус лицензии."
     Write-Host ""
+    Write-Host "  Full responsibility for running external code lies with you alone."
     Write-Host "  Вся ответственность за запуск внешнего кода лежит исключительно на вас."
     Write-Host ""
-    Write-Host "  1. Я понимаю риски, продолжить запуск / Proceed" -ForegroundColor Green
-    Write-Host "  0. Отмена / Cancel"
+    Write-Host "  Y. I understand the risks, proceed / Я понимаю риски, продолжить" -ForegroundColor Green
+    Write-Host "  N. Cancel / Отмена"
     Write-Host ""
     $choice = Read-Host "  >"
-    if ($choice -eq "1") {
+    if ($choice.ToUpper() -eq "Y") {
         Write-Host ""
+        Write-Host "  Downloading and running MAS from get.activated.win..." -ForegroundColor DarkGray
         Write-Host "  Загрузка и запуск MAS с get.activated.win..." -ForegroundColor DarkGray
         Write-Host ""
         try {
             Invoke-RestMethod -Uri "https://get.activated.win" | Invoke-Expression
             Write-Log "MAS Activator executed successfully via irm"
         } catch {
+            Write-Host "  [!] Direct connection failed (irm). Trying DNS bypass (DoH)..." -ForegroundColor Yellow
             Write-Host "  [!] Ошибка прямого подключения (irm). Пробуем обход через DNS (DoH)..." -ForegroundColor Yellow
             try {
                 iex (curl.exe -s --doh-url https://1.1.1.1/dns-query https://get.activated.win)
                 Write-Log "MAS Activator executed via DoH fallback"
             } catch {
+                Write-Host "  [!] Could not download the script. Check your network or antivirus." -ForegroundColor Red
                 Write-Host "  [!] Не удалось загрузить скрипт. Проверьте подключение к сети или антивирус." -ForegroundColor Red
             }
         }
@@ -1971,10 +2309,12 @@ function Show-AdvancedMenu {
                 if ($confirm.ToUpper() -eq "Y") {
                     Write-Host ""
                     Write-Host "  Running DISM cleanup... this may take several minutes." -ForegroundColor DarkGray
+                    Write-Host ""
                     Dism.exe /Online /Cleanup-Image /StartComponentCleanup /ResetBase
                     Write-Log "DISM ResetBase cleanup executed"
                     Write-Host ""
-                    Write-Host "  Done." -ForegroundColor Green
+                    Write-Host "  [$(Get-BlockBar 100)] 100%" -ForegroundColor Green
+                    Write-Host "  $(L 'Done')" -ForegroundColor Green
                 } else {
                     Write-Host "  Cancelled / Отменено." -ForegroundColor Yellow
                 }
@@ -2015,13 +2355,13 @@ function Show-AdvancedMenu {
                             New-CimInstance -ClassName Win32_PageFileSetting -Property @{ Name = "C:\pagefile.sys"; InitialSize = $sizeMB; MaximumSize = $sizeMB } -ErrorAction SilentlyContinue | Out-Null
                         }
                         Write-Log "Pagefile set to fixed $sizeMB MB"
-                        Write-Host "  Done. Restart required." -ForegroundColor Green
+                        Write-Host "  $(L 'DoneRestart')" -ForegroundColor Green
                     }
                 } elseif ($sub -eq "2") {
                     $cs = Get-CimInstance Win32_ComputerSystem
                     $cs | Set-CimInstance -Property @{ AutomaticManagedPagefile = $true } -ErrorAction SilentlyContinue
                     Write-Log "Pagefile reset to automatic"
-                    Write-Host "  Done. Restart required." -ForegroundColor Green
+                    Write-Host "  $(L 'DoneRestart')" -ForegroundColor Green
                 }
                 Write-Host ""
                 Write-Host "  $(L 'PressEnter')"
@@ -2030,10 +2370,10 @@ function Show-AdvancedMenu {
             "3" {
                 while ($true) {
                     Show-Header "Hibernation"
-                    $hiberPath = "C:\hiberfil.sys"
-                    $hiberExists = Test-Path $hiberPath
+                    $hiberEnabled = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Power" -Name "HibernateEnabled" -ErrorAction SilentlyContinue).HibernateEnabled
+                    $hiberExists = ($hiberEnabled -eq 1)
                     $mark = Get-ToggleMark -IsOn $hiberExists -OnIsBad $true
-                    Write-Host ("  Hibernation file {0} {1}" -f $mark.Text, $mark.Note) -ForegroundColor $mark.Color
+                    Write-Host ("  Hibernation {0} {1}" -f $mark.Text, $mark.Note) -ForegroundColor $mark.Color
                     Write-Host "  (uses disk space equal to RAM size, mainly useful on laptops with Fast Startup)"
                     Write-Host "  (занимает место на диске равное объёму RAM, полезно на ноутбуках с быстрым запуском)"
                     Write-Host ""
@@ -2049,7 +2389,7 @@ function Show-AdvancedMenu {
                             powercfg /hibernate on
                             Write-Log "Hibernation enabled"
                         }
-                        Write-Host "  Done." -ForegroundColor Green
+                        Write-Host "  $(L 'Done')" -ForegroundColor Green
                         Start-Sleep -Milliseconds 800
                     } else {
                         break
@@ -2070,7 +2410,7 @@ function Show-AdvancedMenu {
                 if ($sub.ToUpper() -eq "Y") {
                     vssadmin resize shadowstorage /for=C: /on=C: /maxsize=5% | Out-Null
                     Write-Log "System Restore space limited to 5%"
-                    Write-Host "  Done." -ForegroundColor Green
+                    Write-Host "  $(L 'Done')" -ForegroundColor Green
                 }
                 Write-Host ""
                 Write-Host "  $(L 'PressEnter')"
@@ -2134,8 +2474,21 @@ function Show-GuessNumberGame {
 
 function Show-SnakeGame {
     Show-Header "Snake"
-    Write-Host "  Controls: W A S D, Q to quit"
-    Write-Host "  Управление: W A S D, Q для выхода"
+    Write-Host "  Choose controls / Выберите управление:"
+    Write-Host "  1. WASD"
+    Write-Host "  2. Arrow keys / Стрелки"
+    Write-Host ""
+    $controlChoice = Read-Host "  >"
+    $useArrows = ($controlChoice -eq "2")
+
+    Show-Header "Snake"
+    if ($useArrows) {
+        Write-Host "  Controls: Arrow keys, Q to quit"
+        Write-Host "  Управление: Стрелки, Q для выхода"
+    } else {
+        Write-Host "  Controls: W A S D, Q to quit"
+        Write-Host "  Управление: W A S D, Q для выхода"
+    }
     Write-Host ""
     Write-Host "  Press any key to start... / Нажмите любую клавишу для старта..."
     [System.Console]::ReadKey($true) | Out-Null
@@ -2153,12 +2506,22 @@ function Show-SnakeGame {
     while (-not $gameOver) {
         if ([Console]::KeyAvailable) {
             $key = [Console]::ReadKey($true).Key
-            switch ($key) {
-                "W" { if ($dir -ne "S") { $dir = "W" } }
-                "S" { if ($dir -ne "W") { $dir = "S" } }
-                "A" { if ($dir -ne "D") { $dir = "A" } }
-                "D" { if ($dir -ne "A") { $dir = "D" } }
-                "Q" { $gameOver = $true }
+            if ($useArrows) {
+                switch ($key) {
+                    "UpArrow"    { if ($dir -ne "S") { $dir = "W" } }
+                    "DownArrow"  { if ($dir -ne "W") { $dir = "S" } }
+                    "LeftArrow"  { if ($dir -ne "D") { $dir = "A" } }
+                    "RightArrow" { if ($dir -ne "A") { $dir = "D" } }
+                    "Q" { $gameOver = $true }
+                }
+            } else {
+                switch ($key) {
+                    "W" { if ($dir -ne "S") { $dir = "W" } }
+                    "S" { if ($dir -ne "W") { $dir = "S" } }
+                    "A" { if ($dir -ne "D") { $dir = "A" } }
+                    "D" { if ($dir -ne "A") { $dir = "D" } }
+                    "Q" { $gameOver = $true }
+                }
             }
         }
 
@@ -2193,7 +2556,8 @@ function Show-SnakeGame {
 
         [Console]::SetCursorPosition(0, $consoleTop)
         $sb = New-Object System.Text.StringBuilder
-        [void]$sb.AppendLine("  Score: $score   (W A S D to move, Q to quit)")
+        $controlsHint = if ($useArrows) { "Arrow keys" } else { "W A S D" }
+        [void]$sb.AppendLine("  Score: $score   ($controlsHint to move, Q to quit)")
         [void]$sb.AppendLine("  +" + ("-" * $width) + "+")
         for ($y = 0; $y -lt $height; $y++) {
             [void]$sb.Append("  |")
@@ -2230,6 +2594,8 @@ function Show-RestMenu {
         Show-Header "Rest / Отдых"
         Write-Host "  1. Guess the Number / Угадай число"
         Write-Host "  2. Snake / Змейка"
+        Write-Host "  3. Clicker (upgrades & idle income) / Кликер"
+        Write-Host "  4. CPS Test (clicks per second) / Тест КПС"
         Write-Host ""
         Write-Host "  0. $(L 'Back')"
         Write-Host ""
@@ -2237,6 +2603,8 @@ function Show-RestMenu {
         switch ($choice) {
             "1" { Show-GuessNumberGame }
             "2" { Show-SnakeGame }
+            "3" { Show-ClickerGame }
+            "4" { Show-CPSTest }
             "0" { return }
         }
     }
@@ -2276,7 +2644,7 @@ function Ensure-Fastfetch {
         Remove-Item -Path $zipPath -Force -ErrorAction SilentlyContinue
         Remove-Item -Path $extractPath -Recurse -Force -ErrorAction SilentlyContinue
         Write-Log "Fastfetch downloaded from official source"
-        Write-Host "  Done." -ForegroundColor Green
+        Write-Host "  $(L 'Done')" -ForegroundColor Green
         Start-Sleep -Seconds 1
         return $exePath
     } catch {
@@ -2312,14 +2680,14 @@ function Ensure-Smartctl {
     $confirm = Read-Host "  >"
     if ($confirm.ToUpper() -ne "Y") { return $null }
 
-    $url = "https://sourceforge.net/projects/smartmontools/files/latest/download"
+    $url = "https://sourceforge.net/projects/smartmontools/files/smartmontools/7.5/smartmontools-7.5.win32-setup.exe/download"
     $installerPath = Join-Path $ScriptDir "smartmontools_setup.exe"
     $installDir = Join-Path $ScriptDir "smartmontools_tmp"
 
     try {
         Write-Host ""
         Write-Host "  Downloading... / Скачивание..." -ForegroundColor DarkGray
-        Invoke-WebRequest -Uri $url -OutFile $installerPath -UseBasicParsing
+        Invoke-WebRequest -Uri $url -OutFile $installerPath -UseBasicParsing -MaximumRedirection 10
 
         Write-Host "  Installing silently... / Тихая установка..." -ForegroundColor DarkGray
         Start-Process -FilePath $installerPath -ArgumentList "/S", "/D=$installDir" -Wait
@@ -2333,7 +2701,7 @@ function Ensure-Smartctl {
 
         if (Test-Path $exePath) {
             Write-Log "Smartctl downloaded from official source"
-            Write-Host "  Done." -ForegroundColor Green
+            Write-Host "  $(L 'Done')" -ForegroundColor Green
             Start-Sleep -Seconds 1
             return $exePath
         } else {
@@ -2411,7 +2779,7 @@ function Ensure-SysinternalsTool {
         Write-Host "  Downloading... / Скачивание..." -ForegroundColor DarkGray
         Invoke-WebRequest -Uri $url -OutFile $exePath -UseBasicParsing
         Write-Log "$ToolName downloaded from official source"
-        Write-Host "  Done." -ForegroundColor Green
+        Write-Host "  $(L 'Done')" -ForegroundColor Green
         Start-Sleep -Seconds 1
         return $exePath
     } catch {
@@ -2507,9 +2875,900 @@ function Show-DiagnosticsMenu {
 }
 
 # =====================================================
+#  SELF-UPDATE (GitHub Releases)
+# =====================================================
+$Global:GitHubRepo = "GhostSmash/OptiTool"
+
+function Compare-Versions {
+    param([string]$v1, [string]$v2)
+    # Убираем букву 'v' если есть, сравниваем как версии
+    $clean1 = $v1 -replace "^v", ""
+    $clean2 = $v2 -replace "^v", ""
+    try {
+        return ([version]$clean1).CompareTo([version]$clean2)
+    } catch {
+        return [string]::Compare($clean1, $clean2)
+    }
+}
+
+function Get-VersionParts {
+    param([string]$v)
+    $clean = $v -replace "^v", ""
+    try {
+        $parsed = [version]$clean
+        return @{ Major = $parsed.Major; Minor = $parsed.Minor; Build = [math]::Max(0, $parsed.Build) }
+    } catch {
+        return @{ Major = 0; Minor = 0; Build = 0 }
+    }
+}
+
+function Invoke-UpdateCheck {
+    param([bool]$Manual = $false)
+
+    if (-not $Manual -and -not $Global:Config.AutoUpdateCheck) { return }
+
+    if ($Manual) {
+        Show-Header "Update Check"
+    }
+    Write-Host "  $(L 'CheckingUpdate')" -ForegroundColor DarkGray
+
+    try {
+        $apiUrl = "https://api.github.com/repos/$Global:GitHubRepo/releases"
+        $allReleases = Invoke-RestMethod -Uri $apiUrl -Headers @{ "User-Agent" = "OptiTool" } -TimeoutSec 8
+    } catch {
+        if ($Manual) {
+            Write-Host "  Could not check for updates (no connection or repo unavailable)." -ForegroundColor Yellow
+            Write-Host "  Не удалось проверить обновления (нет соединения или репозиторий недоступен)."
+            Write-Host ""
+            Write-Host "  $(L 'PressEnter')"
+            Read-Host | Out-Null
+        }
+        return
+    }
+
+    if (-not $allReleases -or $allReleases.Count -eq 0) {
+        if ($Manual) {
+            Write-Host "  No releases found. / Релизы не найдены." -ForegroundColor Yellow
+            Write-Host ""
+            Write-Host "  $(L 'PressEnter')"
+            Read-Host | Out-Null
+        }
+        return
+    }
+
+    # Оставляем только версии новее текущей, сортируем по возрастанию
+    $newerReleases = @($allReleases | Where-Object {
+        (Compare-Versions -v1 $_.tag_name -v2 $Global:AppVersion) -gt 0
+    } | Sort-Object -Property @{ Expression = { ([version]($_.tag_name -replace '^v','')) } })
+
+    if ($newerReleases.Count -eq 0) {
+        if ($Manual) {
+            Write-Host "  $(L 'UpdateNone')" -ForegroundColor Green
+            Write-Host ""
+            Write-Host "  $(L 'PressEnter')"
+            Read-Host | Out-Null
+        }
+        return
+    }
+
+    $latestRelease = $newerReleases[-1]
+
+    # Строим список для отображения с группировкой: если Major.Minor совпадает у соседних версий,
+    # но у следующей есть patch (Build > 0) - показываем со смещением как "рекомендуемую"
+    $displayItems = @()
+    for ($i = 0; $i -lt $newerReleases.Count; $i++) {
+        $parts = Get-VersionParts -v $newerReleases[$i].tag_name
+        $isLatest = ($i -eq $newerReleases.Count - 1)
+        $indent = $false
+
+        if ($i -gt 0) {
+            $prevParts = Get-VersionParts -v $newerReleases[$i-1].tag_name
+            if ($parts.Major -eq $prevParts.Major -and $parts.Minor -eq $prevParts.Minor -and $parts.Build -gt $prevParts.Build) {
+                $indent = $true
+            }
+        }
+
+        $displayItems += [PSCustomObject]@{
+            Release  = $newerReleases[$i]
+            Indent   = $indent
+            IsLatest = $isLatest
+        }
+    }
+
+    while ($true) {
+        Show-Header "Update Available"
+        Write-Host "  $(L 'UpdateAvailable')"
+        Write-Host ""
+        for ($i = 0; $i -lt $displayItems.Count; $i++) {
+            $item = $displayItems[$i]
+            $prefix = if ($item.Indent) { "    " } else { "" }
+            $label = if ($item.IsLatest) { "$($item.Release.tag_name) (recommended)" } else { "$($item.Release.tag_name)" }
+            Write-Host ("  {0}{1}. {2}" -f $prefix, ($i+1), $label)
+        }
+        Write-Host ""
+        Write-Host "  0. $(L 'Back')"
+        Write-Host ""
+        $choice = Read-Host "  >"
+        if ($choice -eq "0") { return }
+
+        $index = 0
+        if (-not ([int]::TryParse($choice, [ref]$index) -and $index -ge 1 -and $index -le $displayItems.Count)) {
+            continue
+        }
+
+        $selected = $displayItems[$index - 1]
+        $selectedRelease = $selected.Release
+
+        Show-Header "Update: $($selectedRelease.tag_name)"
+        Write-Host "  ------------------------------------------------" -ForegroundColor DarkGray
+        if ($selectedRelease.body) {
+            $selectedRelease.body -split "`n" | ForEach-Object { Write-Host "  $_" }
+        }
+        Write-Host "  ------------------------------------------------" -ForegroundColor DarkGray
+        Write-Host ""
+
+        if (-not $selected.IsLatest) {
+            Write-Host "  A newer version is available ($($latestRelease.tag_name))." -ForegroundColor Yellow
+            Write-Host "  You can always download it manually from GitHub, or via this auto-update menu later." -ForegroundColor Yellow
+            Write-Host ""
+            Write-Host "  Вышла более новая версия ($($latestRelease.tag_name))." -ForegroundColor Yellow
+            Write-Host "  Её всегда можно скачать вручную на GitHub, либо через это же меню позже." -ForegroundColor Yellow
+            Write-Host ""
+        }
+
+        Write-Host "  $(L 'UpdateConfirm')"
+        $confirm = Read-Host "  >"
+        if ($confirm.ToUpper() -ne "Y") { continue }
+
+        Invoke-UpdateDownload -Release $selectedRelease
+        return
+    }
+}
+
+function Invoke-UpdateDownload {
+    param($Release)
+
+    $asset = $Release.assets | Where-Object { $_.name -like "*.zip" } | Select-Object -First 1
+    if (-not $asset) {
+        Write-Host "  No zip asset found in release. / В релизе не найден zip-файл." -ForegroundColor Red
+        Write-Host ""
+        Write-Host "  $(L 'PressEnter')"
+        Read-Host | Out-Null
+        return
+    }
+
+    Show-Header "Downloading Update"
+    Write-Host "  $(L 'Downloading')"
+    Write-Host ""
+    Write-Host "  [$(Get-BlockBar 0)] 0%"
+    $barLineY = [Console]::CursorTop - 1
+
+    $zipPath = Join-Path $ScriptDir "update_tmp.zip"
+    $extractPath = Join-Path $ScriptDir "update_tmp"
+
+    try {
+        $lastPercent = -1
+
+        $job = Start-Job -ScriptBlock {
+            param($url, $path)
+            $wc = New-Object System.Net.WebClient
+            $wc.DownloadFile($url, $path)
+        } -ArgumentList $asset.browser_download_url, $zipPath
+
+        while ($job.State -eq "Running") {
+            if (Test-Path $zipPath) {
+                $currentSize = (Get-Item $zipPath -ErrorAction SilentlyContinue).Length
+                if ($asset.size -gt 0 -and $currentSize) {
+                    $percent = [math]::Min(99, [math]::Round(($currentSize / $asset.size) * 100))
+                    if ($percent -ne $lastPercent) {
+                        $lastPercent = $percent
+                        [Console]::SetCursorPosition(0, $barLineY)
+                        Write-Host "  [$(Get-BlockBar $percent)] $percent%  "
+                    }
+                }
+            }
+            Start-Sleep -Milliseconds 200
+        }
+        Receive-Job -Job $job | Out-Null
+        Remove-Job -Job $job -Force
+
+        [Console]::SetCursorPosition(0, $barLineY)
+        Write-Host "  [$(Get-BlockBar 100)] 100%  "
+
+        Expand-Archive -Path $zipPath -DestinationPath $extractPath -Force
+
+        $newMenu = Get-ChildItem -Path $extractPath -Filter "menu.ps1" -Recurse | Select-Object -First 1
+        $newBat  = Get-ChildItem -Path $extractPath -Filter "start.bat" -Recurse | Select-Object -First 1
+
+        if ($newMenu) { Copy-Item -Path $newMenu.FullName -Destination (Join-Path $ScriptDir "menu.ps1") -Force }
+        if ($newBat)  { Copy-Item -Path $newBat.FullName -Destination (Join-Path $ScriptDir "start.bat") -Force }
+
+        Remove-Item -Path $zipPath -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path $extractPath -Recurse -Force -ErrorAction SilentlyContinue
+
+        Write-Log "Updated to $($Release.tag_name)"
+        Write-Host ""
+        Write-Host "  $(L 'UpdateDone')" -ForegroundColor Green
+        Start-Sleep -Seconds 2
+
+        Save-Config
+        Start-Process -FilePath (Join-Path $ScriptDir "start.bat")
+        exit
+    } catch {
+        Write-Host ""
+        Write-Host "  Update failed. / Обновление не удалось." -ForegroundColor Red
+        Start-Sleep -Seconds 2
+    }
+}
+
+# =====================================================
+#  РАЗДЕЛ M: SYSTEM TOOLS / СИСТЕМНЫЕ УТИЛИТЫ
+# =====================================================
+$Global:SystemTools = @(
+    @{ Name = "Disk Management / Управление дисками";       Cmd = "diskmgmt.msc" }
+    @{ Name = "Services / Службы";                            Cmd = "services.msc" }
+    @{ Name = "Device Manager / Диспетчер устройств";         Cmd = "devmgmt.msc" }
+    @{ Name = "Computer Management / Управление компьютером"; Cmd = "compmgmt.msc" }
+    @{ Name = "Local Group Policy / Локальная групп. политика"; Cmd = "gpedit.msc" }
+    @{ Name = "Local Security Policy / Локальная безопасность"; Cmd = "secpol.msc" }
+    @{ Name = "Event Viewer / Просмотр событий";              Cmd = "eventvwr.msc" }
+    @{ Name = "Performance Monitor / Монитор производ.";      Cmd = "perfmon.msc" }
+    @{ Name = "Task Scheduler / Планировщик заданий";         Cmd = "taskschd.msc" }
+    @{ Name = "System Configuration (msconfig)";              Cmd = "msconfig" }
+    @{ Name = "Registry Editor / Редактор реестра";           Cmd = "regedit" }
+    @{ Name = "System Information / Сведения о системе";      Cmd = "msinfo32" }
+    @{ Name = "DirectX Diagnostic Tool";                       Cmd = "dxdiag" }
+)
+
+function Show-SystemToolsMenu {
+    while ($true) {
+        Show-Header "System Tools"
+        for ($i = 0; $i -lt $Global:SystemTools.Count; $i++) {
+            Write-Host ("  {0,2}. {1}" -f ($i+1), $Global:SystemTools[$i].Name)
+        }
+        Write-Host ""
+        Write-Host "  B. Safe Mode on next boot / Безопасный режим при след. загрузке"
+        Write-Host "  0. $(L 'Back')"
+        Write-Host ""
+        $choice = Read-Host "  >"
+        if ($choice.ToUpper() -eq "0") { return }
+        if ($choice.ToUpper() -eq "B") {
+            Show-SafeModeMenu
+            continue
+        }
+        $index = 0
+        if ([int]::TryParse($choice, [ref]$index) -and $index -ge 1 -and $index -le $Global:SystemTools.Count) {
+            Start-Process $Global:SystemTools[$index - 1].Cmd
+            Write-Log "Launched system tool: $($Global:SystemTools[$index - 1].Cmd)"
+        }
+    }
+}
+
+function Show-SafeModeMenu {
+    Show-Header "Safe Mode"
+    $bcdOutput = bcdedit /enum "{current}" 2>&1
+    $safeBootActive = $bcdOutput -match "safeboot"
+
+    if ($safeBootActive) {
+        Write-Host "  Safe Mode is currently SCHEDULED for next boot." -ForegroundColor Yellow
+        Write-Host "  Безопасный режим ЗАПЛАНИРОВАН на следующую загрузку." -ForegroundColor Yellow
+    } else {
+        Write-Host "  Safe Mode is NOT scheduled. Normal boot is set."
+        Write-Host "  Безопасный режим НЕ запланирован. Обычная загрузка."
+    }
+    Write-Host ""
+    Write-Host "  1. Enable Safe Mode (minimal) on next boot / Включить"
+    Write-Host "  2. Enable Safe Mode with Networking / Включить с сетью"
+    Write-Host "  3. Disable Safe Mode (normal boot) / Отключить"
+    Write-Host "  0. $(L 'Back')"
+    Write-Host ""
+    $choice = Read-Host "  >"
+    switch ($choice) {
+        "1" {
+            bcdedit /set "{current}" safeboot minimal | Out-Null
+            Write-Log "Safe Mode (minimal) scheduled for next boot"
+            Write-Host $(if ($Global:Config.Language -eq "RU") { "  Готово. Перезагрузитесь для входа." } else { "  Done. Restart to enter Safe Mode." }) -ForegroundColor Green
+        }
+        "2" {
+            bcdedit /set "{current}" safeboot network | Out-Null
+            Write-Log "Safe Mode (network) scheduled for next boot"
+            Write-Host $(if ($Global:Config.Language -eq "RU") { "  Готово. Перезагрузитесь для входа." } else { "  Done. Restart to enter Safe Mode." }) -ForegroundColor Green
+        }
+        "3" {
+            bcdedit /deletevalue "{current}" safeboot | Out-Null
+            Write-Log "Safe Mode disabled, normal boot restored"
+            Write-Host $(if ($Global:Config.Language -eq "RU") { "  Готово. Обычная загрузка восстановлена." } else { "  Done. Normal boot restored." }) -ForegroundColor Green
+        }
+    }
+    Write-Host ""
+    Write-Host "  $(L 'PressEnter')"
+    Read-Host | Out-Null
+}
+
+# =====================================================
+#  РАЗДЕЛ S: SOFTWARE / ЗАГРУЗКА ПРОГРАММ
+# =====================================================
+$Global:SoftwareCategories = @{
+    "1" = @{
+        Name = "Benchmark & Testing / Тесты и бенчмарки"
+        Apps = @(
+            @{ Name = "CPU-Z";    Url = "https://www.cpuid.com/softwares/cpu-z.html" ; Manual = $true }
+            @{ Name = "GPU-Z";    Url = "https://www.techpowerup.com/download/techpowerup-gpu-z/" ; Manual = $true }
+            @{ Name = "FurMark";  Url = "https://geeks3d.com/furmark/" ; Manual = $true }
+            @{ Name = "MSI Afterburner (in-game overlay, FPS/temps)"; Url = "https://www.msi.com/Landing/afterburner/graphics-cards" ; Manual = $true }
+            @{ Name = "AIDA64 (stress test, sensors - 30-day trial)"; Url = "https://www.aida64.com/downloads" ; Manual = $true }
+        )
+    }
+    "2" = @{
+        Name = "Browsers / Браузеры"
+        Apps = @(
+            @{ Name = "Google Chrome"; Url = "https://dl.google.com/chrome/install/latest/chrome_installer.exe" }
+            @{ Name = "Mozilla Firefox"; Url = "https://download.mozilla.org/?product=firefox-latest&os=win64&lang=en-US" }
+        )
+    }
+    "3" = @{
+        Name = "Messengers / Мессенджеры"
+        Apps = @(
+            @{ Name = "Telegram"; Url = "https://telegram.org/dl/desktop/win64" }
+            @{ Name = "Viber";    Url = "https://download.cdn.viber.com/desktop/Windows/ViberSetup.exe" }
+        )
+    }
+    "4" = @{
+        Name = "Utilities / Утилиты"
+        Apps = @(
+            @{ Name = "7-Zip";      Url = "https://www.7-zip.org/download.html" ; Manual = $true }
+            @{ Name = "VLC Player"; Url = "https://get.videolan.org/vlc/last/win64/vlc-3.0.23-win64.exe" }
+        )
+    }
+}
+
+function Show-SoftwareMenu {
+    while ($true) {
+        Show-Header "Software"
+        Write-Host "  Note: links point to official sources; versions may lag behind latest." -ForegroundColor DarkGray
+        Write-Host "  Заметка: ссылки ведут на официальные источники; версии могут отставать от последних." -ForegroundColor DarkGray
+        Write-Host ""
+        foreach ($key in ($Global:SoftwareCategories.Keys | Sort-Object)) {
+            Write-Host "  $key. $($Global:SoftwareCategories[$key].Name)"
+        }
+        Write-Host ""
+        Write-Host "  0. $(L 'Back')"
+        Write-Host ""
+        $choice = Read-Host "  >"
+        if ($choice -eq "0") { return }
+        if ($Global:SoftwareCategories.ContainsKey($choice)) {
+            Show-SoftwareCategoryMenu -Category $Global:SoftwareCategories[$choice]
+        }
+    }
+}
+
+function Show-SoftwareCategoryMenu {
+    param($Category)
+    while ($true) {
+        Show-Header $Category.Name
+        $apps = $Category.Apps
+        for ($i = 0; $i -lt $apps.Count; $i++) {
+            Write-Host ("  {0}. {1}" -f ($i+1), $apps[$i].Name)
+        }
+        Write-Host ""
+        Write-Host "  0. $(L 'Back')"
+        Write-Host ""
+        $choice = Read-Host "  >"
+        if ($choice -eq "0") { return }
+        $index = 0
+        if ([int]::TryParse($choice, [ref]$index) -and $index -ge 1 -and $index -le $apps.Count) {
+            $app = $apps[$index - 1]
+            if ($app.Manual) {
+                Write-Host ""
+                Write-Host "  This tool is only distributed via its official page (no direct exe link):"
+                Write-Host "  Эта программа распространяется только через официальную страницу:"
+                Write-Host "  $($app.Url)" -ForegroundColor (Get-ThemeColor)
+                Write-Host ""
+                Write-Host "  $(L 'PressEnter')"
+                Read-Host | Out-Null
+                continue
+            }
+            Show-Header "Downloading $($app.Name)"
+            $ext = if ($app.Url -match "\.zip") { ".zip" } else { ".exe" }
+            $outPath = Join-Path $ScriptDir "$($app.Name -replace '\s','_')$ext"
+            try {
+                Write-Host "  $(L 'Downloading') $($app.Name)..."
+                Invoke-WebRequest -Uri $app.Url -OutFile $outPath -UseBasicParsing -MaximumRedirection 10
+                Write-Log "Downloaded $($app.Name) from $($app.Url)"
+                Write-Host ""
+                Write-Host "  Done. Saved to: $outPath" -ForegroundColor Green
+                Write-Host "  Готово. Сохранено в: $outPath" -ForegroundColor Green
+            } catch {
+                Write-Host ""
+                Write-Host "  Download failed. / Скачивание не удалось." -ForegroundColor Red
+            }
+            Write-Host ""
+            Write-Host "  $(L 'PressEnter')"
+            Read-Host | Out-Null
+        }
+    }
+}
+
+# =====================================================
+#  РАЗДЕЛ E: EDITION INFO / ИНФО О РЕДАКЦИИ
+# =====================================================
+function Show-EditionMenu {
+    $edition = Get-WindowsEditionInfo
+
+    while ($true) {
+        Show-Header "Edition Info"
+        Write-Host "  OS:      $($edition.Caption)"
+        Write-Host "  Edition: $($edition.EditionID)"
+        Write-Host "  Build:   $($edition.BuildNumber) (Windows $(if ($edition.IsWin11) { '11' } else { '10' }))"
+        if ($edition.DisplayVersion) {
+            Write-Host "  Version: $($edition.DisplayVersion)"
+        }
+        Write-Host ""
+
+        Write-Host "  1. Detailed info / Подробная информация"
+        Write-Host "  2. Change edition/version (not recommended) / Сменить версию (не рекомендуется)"
+        Write-Host "  3. Tweaks (for this edition) / Твики для этой версии"
+        Write-Host ""
+        Write-Host "  0. $(L 'Back')"
+        Write-Host ""
+        $choice = Read-Host "  >"
+        switch ($choice) {
+            "1" { Show-EditionDetailedInfo -Edition $edition }
+            "2" { Show-EditionChangeWarning }
+            "3" { Show-EditionTweaksMenu -Edition $edition }
+            "0" { return }
+        }
+    }
+}
+
+function Show-EditionDetailedInfo {
+    param($Edition)
+    Show-Header "Detailed Edition Info"
+    Write-Host "  OS Caption:      $($Edition.Caption)"
+    Write-Host "  Edition ID:      $($Edition.EditionID)"
+    Write-Host "  Build Number:    $($Edition.BuildNumber)"
+    Write-Host "  Display Version: $($Edition.DisplayVersion)"
+    Write-Host "  Is Windows 11:   $($Edition.IsWin11)"
+    Write-Host "  Is LTSC:         $($Edition.IsLTSC)"
+    Write-Host "  Is Home:         $($Edition.IsHome)"
+    Write-Host "  Is Pro:          $($Edition.IsPro)"
+    Write-Host "  Is Enterprise:   $($Edition.IsEnterprise)"
+    Write-Host "  Is Education:    $($Edition.IsEducation)"
+    Write-Host "  Group Policy:    $(if ($Edition.HasGroupPolicy) { 'Available' } else { 'Not available (Home)' })"
+    Write-Host ""
+
+    if ($Edition.IsLTSC) {
+        Write-Host "  This is an LTSC edition. Some settings may show" -ForegroundColor Yellow
+        Write-Host "  'managed by your organization' due to LTSC design," -ForegroundColor Yellow
+        Write-Host "  not because your system is broken." -ForegroundColor Yellow
+        Write-Host "  Это LTSC-редакция. Некоторые настройки могут писать" -ForegroundColor Yellow
+        Write-Host "  'управляется организацией' из-за особенностей LTSC," -ForegroundColor Yellow
+        Write-Host "  а не потому что система сломана." -ForegroundColor Yellow
+        Write-Host ""
+    }
+    if ($Edition.IsHome) {
+        Write-Host "  Home edition: Group Policy Editor (gpedit.msc), Hyper-V, and" -ForegroundColor DarkGray
+        Write-Host "  full BitLocker are not available. Alternatives are offered" -ForegroundColor DarkGray
+        Write-Host "  under the Tweaks menu." -ForegroundColor DarkGray
+        Write-Host "  Домашняя редакция: gpedit.msc, Hyper-V и полный BitLocker" -ForegroundColor DarkGray
+        Write-Host "  недоступны. Альтернативы предложены в меню Твиков." -ForegroundColor DarkGray
+        Write-Host ""
+    }
+
+    Write-Host "  $(L 'PressEnter')"
+    Read-Host | Out-Null
+}
+
+function Show-EditionChangeWarning {
+    Show-Header "Change Edition/Version"
+    Write-Host "  ████████████████████████████████████████████" -ForegroundColor Red
+    Write-Host "  █   NOT RECOMMENDED / НЕ РЕКОМЕНДУЕТСЯ       █" -ForegroundColor Red
+    Write-Host "  ████████████████████████████████████████████" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "  Changing Windows edition (e.g. Home -> Pro) or upgrading"
+    Write-Host "  the feature version in place can cause instability, broken"
+    Write-Host "  drivers, or activation issues. A clean install is safer."
+    Write-Host ""
+    Write-Host "  Смена редакции Windows (напр. Home -> Pro) или обновление"
+    Write-Host "  версии на месте может вызвать нестабильность, проблемы с"
+    Write-Host "  драйверами или активацией. Чистая установка безопаснее."
+    Write-Host ""
+    Write-Host "  This tool does not perform edition changes."
+    Write-Host "  Этот инструмент не выполняет смену редакции."
+    Write-Host ""
+    Write-Host "  You can check for feature updates manually via Windows Update,"
+    Write-Host "  or change edition via Settings > System > Activation > Change"
+    Write-Host "  product key (Windows official method only)."
+    Write-Host "  Проверить обновления можно вручную через Windows Update,"
+    Write-Host "  либо сменить редакцию через Параметры > Система > Активация >"
+    Write-Host "  Изменить ключ продукта (только официальный способ Windows)."
+    Write-Host ""
+    Write-Host "  $(L 'PressEnter')"
+    Read-Host | Out-Null
+}
+
+function Show-EditionTweaksMenu {
+    param($Edition)
+    while ($true) {
+        Show-Header "Edition Tweaks"
+        Write-Host "  1. Fix 'managed by organization' labels (LTSC-related policies)"
+        Write-Host "  2. Group Policy access (gpedit) / alternative for Home"
+        Write-Host "  3. Enable Hyper-V (Pro/Enterprise/Education only)"
+        Write-Host "  4. Enable BitLocker (Pro/Enterprise/Education only)"
+        if ($Edition.IsWin11) {
+            Write-Host "  5. Windows 11: restore classic right-click context menu"
+            Write-Host "  6. Windows 11: disable taskbar widgets"
+            Write-Host "  7. Windows 11: disable Copilot"
+        }
+        Write-Host ""
+        Write-Host "  0. $(L 'Back')"
+        Write-Host ""
+        $choice = Read-Host "  >"
+        switch ($choice) {
+            "1" { Invoke-FixOrgPolicyLabels }
+            "2" { Show-GroupPolicyAccess -Edition $Edition }
+            "3" { Invoke-EnableHyperV -Edition $Edition }
+            "4" { Invoke-EnableBitLocker -Edition $Edition }
+            "5" { if ($Edition.IsWin11) { Invoke-Win11ClassicContextMenu } }
+            "6" { if ($Edition.IsWin11) { Invoke-Win11DisableWidgets } }
+            "7" { if ($Edition.IsWin11) { Invoke-Win11DisableCopilot } }
+            "0" { return }
+        }
+    }
+}
+
+function Invoke-FixOrgPolicyLabels {
+    Show-Header "Fix Organization Labels"
+    Write-Host "  This resets specific Group Policy registry keys that cause"
+    Write-Host "  the 'managed by your organization' label on LTSC systems,"
+    Write-Host "  where the underlying feature actually exists but is blocked"
+    Write-Host "  by a policy rather than missing entirely."
+    Write-Host ""
+    Write-Host "  Это сбрасывает конкретные ключи групповой политики,"
+    Write-Host "  вызывающие надпись 'управляется организацией' на LTSC,"
+    Write-Host "  когда функция реально есть, но заблокирована политикой,"
+    Write-Host "  а не отсутствует физически."
+    Write-Host ""
+    Write-Host "  Proceed? / Продолжить? (Y/N)"
+    $confirm = Read-Host "  >"
+    if ($confirm.ToUpper() -ne "Y") { return }
+
+    $policyPaths = @(
+        "HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent",
+        "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection",
+        "HKLM:\SOFTWARE\Policies\Microsoft\Windows\ContentDeliveryManager",
+        "HKLM:\SOFTWARE\Policies\Microsoft\WindowsStore",
+        "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer"
+    )
+    $removedCount = 0
+    foreach ($path in $policyPaths) {
+        if (Test-Path $path) {
+            Remove-Item -Path $path -Recurse -Force -ErrorAction SilentlyContinue
+            $removedCount++
+        }
+    }
+    Write-Log "Removed $removedCount organization policy keys (LTSC label fix)"
+    Write-Host ""
+    Write-Host "  Done. Removed $removedCount polic$(if($removedCount -eq 1){'y'}else{'ies'}). Re-login may be required." -ForegroundColor Green
+    Write-Host "  Готово. Удалено политик: $removedCount. Может потребоваться перезаход." -ForegroundColor Green
+    Write-Host ""
+    Write-Host "  $(L 'PressEnter')"
+    Read-Host | Out-Null
+}
+
+function Show-GroupPolicyAccess {
+    param($Edition)
+    Show-Header "Group Policy"
+    if ($Edition.IsHome) {
+        Write-Host "  gpedit.msc is not available on Home edition." -ForegroundColor Yellow
+        Write-Host "  gpedit.msc недоступен на домашней редакции." -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "  Alternative: most policies can still be set directly via the"
+        Write-Host "  registry (regedit) at HKLM/HKCU:\SOFTWARE\Policies\..."
+        Write-Host "  Альтернатива: большинство политик можно задать напрямую"
+        Write-Host "  через реестр (regedit) по пути HKLM/HKCU:\SOFTWARE\Policies\..."
+        Write-Host ""
+        Write-Host "  1. Open Registry Editor / Открыть редактор реестра"
+        Write-Host "  0. $(L 'Back')"
+        Write-Host ""
+        $choice = Read-Host "  >"
+        if ($choice -eq "1") { Start-Process "regedit" }
+    } else {
+        Start-Process "gpedit.msc"
+        Write-Log "Launched gpedit.msc"
+    }
+}
+
+function Invoke-EnableHyperV {
+    param($Edition)
+    Show-Header "Hyper-V"
+    if ($Edition.IsHome) {
+        Write-Host "  Hyper-V is not available on Home edition." -ForegroundColor Yellow
+        Write-Host "  Hyper-V недоступен на домашней редакции." -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "  $(L 'PressEnter')"
+        Read-Host | Out-Null
+        return
+    }
+    Write-Host "  This will enable the Hyper-V Windows feature (restart required)."
+    Write-Host "  Это включит компонент Hyper-V (потребуется перезагрузка)."
+    Write-Host ""
+    Write-Host "  Proceed? / Продолжить? (Y/N)"
+    $confirm = Read-Host "  >"
+    if ($confirm.ToUpper() -eq "Y") {
+        Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-All -NoRestart -ErrorAction SilentlyContinue | Out-Null
+        Write-Log "Hyper-V feature enabled (restart required)"
+        Write-Host $(if ($Global:Config.Language -eq "RU") { "  Готово. Требуется перезагрузка." } else { "  Done. Restart required." }) -ForegroundColor Green
+    }
+    Write-Host ""
+    Write-Host "  $(L 'PressEnter')"
+    Read-Host | Out-Null
+}
+
+function Invoke-EnableBitLocker {
+    param($Edition)
+    Show-Header "BitLocker"
+    if ($Edition.IsHome) {
+        Write-Host "  Full BitLocker control is not available on Home edition." -ForegroundColor Yellow
+        Write-Host "  Полное управление BitLocker недоступно на домашней редакции." -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "  Alternative: Home edition includes 'Device Encryption' instead,"
+        Write-Host "  found in Settings > Privacy & Security > Device encryption."
+        Write-Host "  Альтернатива: в Home есть 'Шифрование устройства' в"
+        Write-Host "  Параметры > Конфиденциальность и защита > Шифрование устройства."
+        Write-Host ""
+        Write-Host "  $(L 'PressEnter')"
+        Read-Host | Out-Null
+        return
+    }
+    Start-Process "control" -ArgumentList "/name Microsoft.BitLockerDriveEncryption"
+    Write-Log "Opened BitLocker control panel"
+}
+
+function Invoke-Win11ClassicContextMenu {
+    Show-Header "Classic Context Menu"
+    Write-Host "  This restores the Windows 10-style full right-click menu"
+    Write-Host "  instead of the shortened Windows 11 version."
+    Write-Host "  Это вернёт полное контекстное меню в стиле Windows 10"
+    Write-Host "  вместо укороченного варианта Windows 11."
+    Write-Host ""
+    Write-Host "  1. Enable classic menu / Включить"
+    Write-Host "  2. Restore Windows 11 default / Вернуть по умолчанию"
+    Write-Host "  0. $(L 'Back')"
+    Write-Host ""
+    $choice = Read-Host "  >"
+    switch ($choice) {
+        "1" {
+            $keyPath = "HKCU:\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32"
+            New-Item -Path $keyPath -Force | Out-Null
+            New-ItemProperty -Path $keyPath -Name "(Default)" -Value "" -PropertyType String -Force | Out-Null
+            Write-Log "Windows 11 classic context menu enabled"
+            Write-Host $(if ($Global:Config.Language -eq "RU") { "  Готово. Перезапустите Explorer или выйдите из системы." } else { "  Done. Restart Explorer or sign out to apply." }) -ForegroundColor Green
+        }
+        "2" {
+            Remove-Item -Path "HKCU:\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}" -Recurse -Force -ErrorAction SilentlyContinue
+            Write-Log "Windows 11 default context menu restored"
+            Write-Host $(if ($Global:Config.Language -eq "RU") { "  Готово. Перезапустите Explorer или выйдите из системы." } else { "  Done. Restart Explorer or sign out to apply." }) -ForegroundColor Green
+        }
+    }
+    Write-Host ""
+    Write-Host "  $(L 'PressEnter')"
+    Read-Host | Out-Null
+}
+
+function Invoke-Win11DisableWidgets {
+    Show-Header "Taskbar Widgets"
+    $current = (Get-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "TaskbarDa" -ErrorAction SilentlyContinue).TaskbarDa
+    $isOn = ($current -ne 0)
+    $mark = Get-ToggleMark -IsOn $isOn -OnIsBad $false
+    Write-Host ("  Taskbar widgets {0} {1}" -f $mark.Text, $mark.Note) -ForegroundColor $mark.Color
+    Write-Host ""
+    Write-Host "  1. Toggle / Переключить"
+    Write-Host "  0. $(L 'Back')"
+    Write-Host ""
+    $choice = Read-Host "  >"
+    if ($choice -eq "1") {
+        $newVal = if ($isOn) { 0 } else { 1 }
+        Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" -Name "TaskbarDa" -Value $newVal -ErrorAction SilentlyContinue
+        Write-Log "Taskbar widgets set to $newVal"
+        Write-Host $(if ($Global:Config.Language -eq "RU") { "  Готово. Перезапустите Explorer." } else { "  Done. Restart Explorer to apply." }) -ForegroundColor Green
+        Write-Host ""
+        Write-Host "  $(L 'PressEnter')"
+        Read-Host | Out-Null
+    }
+}
+
+function Invoke-Win11DisableCopilot {
+    Show-Header "Windows Copilot"
+    Write-Host "  This disables Windows Copilot via policy (may require restart)."
+    Write-Host "  Это отключит Windows Copilot через политику (может потребоваться перезагрузка)."
+    Write-Host ""
+    Write-Host "  Proceed? / Продолжить? (Y/N)"
+    $confirm = Read-Host "  >"
+    if ($confirm.ToUpper() -eq "Y") {
+        New-Item -Path "HKCU:\Software\Policies\Microsoft\Windows\WindowsCopilot" -Force | Out-Null
+        Set-ItemProperty -Path "HKCU:\Software\Policies\Microsoft\Windows\WindowsCopilot" -Name "TurnOffWindowsCopilot" -Value 1 -Type DWord -Force
+        Write-Log "Windows Copilot disabled via policy"
+        Write-Host "  $(L 'Done')" -ForegroundColor Green
+    }
+    Write-Host ""
+    Write-Host "  $(L 'PressEnter')"
+    Read-Host | Out-Null
+}
+
+# =====================================================
+#  OTHER / ПРОЧЕЕ (объединяет бывшие буквенные пункты)
+# =====================================================
+function Show-OtherMenu {
+    while ($true) {
+        Show-Header (L "MOther")
+        Write-Host ("  1. {0,-27} 5. {1}" -f (L 'MP'), "Advanced / Для разработчиков")
+        Write-Host ("  2. {0,-27} 6. {1}" -f "Rest / Отдых", "Diagnostics / Диагностика")
+        Write-Host ("  3. {0,-27} 7. {1}" -f "Software", "System Tools / Утилиты")
+        Write-Host ("  4. {0,-27}" -f "Edition Info / Инфо о редакции")
+        Write-Host ""
+        Write-Host "  0. $(L 'Back')"
+        Write-Host ""
+        $choice = Read-Host "  >"
+        switch ($choice) {
+            "1" { Show-PowerMenu }
+            "2" { Show-RestMenu }
+            "3" { Show-SoftwareMenu }
+            "4" { Show-EditionMenu }
+            "5" { Show-AdvancedMenu }
+            "6" { Show-DiagnosticsMenu }
+            "7" { Show-SystemToolsMenu }
+            "0" { return }
+        }
+    }
+}
+
+# =====================================================
+#  CLICKER GAME (с прокачкой и сохранением)
+# =====================================================
+$Global:ClickerSavePath = Join-Path $ScriptDir "clicker_save.json"
+
+function Get-ClickerSave {
+    if (Test-Path $Global:ClickerSavePath) {
+        try {
+            $data = Get-Content $Global:ClickerSavePath -Raw | ConvertFrom-Json
+            return @{
+                Coins           = [double]$data.Coins
+                ClickPower      = [int]$data.ClickPower
+                AutoIncome      = [int]$data.AutoIncome
+                ClickUpgradeLvl = [int]$data.ClickUpgradeLvl
+                AutoUpgradeLvl  = [int]$data.AutoUpgradeLvl
+            }
+        } catch { }
+    }
+    return @{ Coins = 0; ClickPower = 1; AutoIncome = 0; ClickUpgradeLvl = 0; AutoUpgradeLvl = 0 }
+}
+
+function Save-ClickerSave {
+    param($Save)
+    $Save | ConvertTo-Json | Set-Content -Path $Global:ClickerSavePath -Encoding UTF8
+}
+
+function Show-ClickerGame {
+    $save = Get-ClickerSave
+    $running = $true
+    $lastAutoTick = Get-Date
+
+    while ($running) {
+        $now = Get-Date
+        if (($now - $lastAutoTick).TotalSeconds -ge 1) {
+            $save.Coins += $save.AutoIncome
+            $lastAutoTick = $now
+        }
+
+        Show-Header "Clicker"
+        Write-Host "  Coins: $([math]::Floor($save.Coins))" -ForegroundColor (Get-ThemeColor)
+        Write-Host "  Per click: $($save.ClickPower)   Per second (idle): $($save.AutoIncome)"
+        Write-Host ""
+        Write-Host "  C. Click! / Кликнуть!"
+        Write-Host ("  1. Upgrade click power (cost: {0}) [lvl {1}]" -f (10 * ($save.ClickUpgradeLvl + 1)), $save.ClickUpgradeLvl)
+        Write-Host ("  2. Upgrade idle income (cost: {0}) [lvl {1}]" -f (25 * ($save.AutoUpgradeLvl + 1)), $save.AutoUpgradeLvl)
+        Write-Host ""
+        Write-Host "  R. Reset save / Сбросить сохранение"
+        Write-Host "  0. Save and exit / Сохранить и выйти"
+        Write-Host ""
+        $choice = Read-Host "  >"
+        switch ($choice.ToUpper()) {
+            "C" {
+                $save.Coins += $save.ClickPower
+            }
+            "1" {
+                $cost = 10 * ($save.ClickUpgradeLvl + 1)
+                if ($save.Coins -ge $cost) {
+                    $save.Coins -= $cost
+                    $save.ClickUpgradeLvl++
+                    $save.ClickPower++
+                } else {
+                    Write-Host "  Not enough coins. / Недостаточно монет." -ForegroundColor Red
+                    Start-Sleep -Seconds 1
+                }
+            }
+            "2" {
+                $cost = 25 * ($save.AutoUpgradeLvl + 1)
+                if ($save.Coins -ge $cost) {
+                    $save.Coins -= $cost
+                    $save.AutoUpgradeLvl++
+                    $save.AutoIncome++
+                } else {
+                    Write-Host "  Not enough coins. / Недостаточно монет." -ForegroundColor Red
+                    Start-Sleep -Seconds 1
+                }
+            }
+            "R" {
+                Write-Host "  Reset all progress? / Сбросить весь прогресс? (Y/N)"
+                $confirm = Read-Host "  >"
+                if ($confirm.ToUpper() -eq "Y") {
+                    $save = @{ Coins = 0; ClickPower = 1; AutoIncome = 0; ClickUpgradeLvl = 0; AutoUpgradeLvl = 0 }
+                }
+            }
+            "0" { $running = $false }
+        }
+    }
+
+    Save-ClickerSave -Save $save
+    Write-Host ""
+    Write-Host "  Progress saved. / Прогресс сохранён." -ForegroundColor Green
+    Start-Sleep -Seconds 1
+}
+
+# =====================================================
+#  CPS TEST (clicks per second)
+# =====================================================
+function Show-CPSTest {
+    Show-Header "CPS Test"
+    Write-Host "  Press any key as fast as you can for 5 seconds!"
+    Write-Host "  Нажимайте любую клавишу как можно быстрее в течение 5 секунд!"
+    Write-Host ""
+    Write-Host "  Press any key to begin... / Нажмите любую клавишу для начала..."
+    [System.Console]::ReadKey($true) | Out-Null
+
+    $clickCount = 0
+    $duration = 5
+    $startTime = Get-Date
+    $endTime = $startTime.AddSeconds($duration)
+
+    Show-Header "CPS Test"
+    Write-Host "  GO! Spam any key! / ДАВАЙ! Спамьте любую клавишу!" -ForegroundColor Green
+    Write-Host ""
+    $timeLineY = [Console]::CursorTop
+    Write-Host "  Time left: $duration.0s"
+
+    while ((Get-Date) -lt $endTime) {
+        if ([Console]::KeyAvailable) {
+            [Console]::ReadKey($true) | Out-Null
+            $clickCount++
+        }
+        $remaining = [math]::Max(0, ($endTime - (Get-Date)).TotalSeconds)
+        [Console]::SetCursorPosition(0, $timeLineY)
+        Write-Host ("  Time left: {0:N1}s   Clicks: {1}  " -f $remaining, $clickCount)
+    }
+
+    # Слить остаточные нажатия из буфера
+    while ([Console]::KeyAvailable) {
+        [Console]::ReadKey($true) | Out-Null
+        $clickCount++
+    }
+
+    $cps = [math]::Round($clickCount / $duration, 2)
+    Write-Host ""
+    Write-Host "  ------------------------------------------------" -ForegroundColor DarkGray
+    Write-Host "  Total clicks: $clickCount"
+    Write-Host "  CPS (clicks per second): $cps" -ForegroundColor (Get-ThemeColor)
+    Write-Host "  Всего кликов: $clickCount"
+    Write-Host "  КПС (кликов в секунду): $cps" -ForegroundColor (Get-ThemeColor)
+    Write-Host ""
+    Write-Host "  $(L 'PressEnter')"
+    Read-Host | Out-Null
+}
+
+# =====================================================
 #  ТОЧКА ВХОДА
 # =====================================================
-Test-WindowsVersion
 Load-Config
 
 if ($Global:Config.FirstRun) {
@@ -2521,4 +3780,5 @@ if ($Global:Config.FirstRun) {
 }
 
 Write-Log "Session started"
+Invoke-UpdateCheck -Manual $false
 Show-MainMenu
