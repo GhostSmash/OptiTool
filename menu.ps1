@@ -26,6 +26,7 @@
 #  SYSTEM TOOLS (M)     - Show-SystemToolsMenu (msc shortcuts, Safe Mode)
 #  EDITION INFO (E)     - Show-EditionMenu (edition/LTSC/Win11 tweaks)
 #  SELF-UPDATE           - Invoke-UpdateCheck, Invoke-UpdateDownload
+#  MODERN UI             - Show-MainMenuModern, Show-HeaderModern, Show-ModernSplash, mascot (Claude Code-style, PS7)
 #  ENTRY POINT           - bottom of file, script execution starts here
 #  ----------------------------------------------------
 #
@@ -71,6 +72,12 @@ try { $Host.UI.RawUI.WindowTitle = "Optimization Tool" } catch { }
 $ErrorActionPreference = "SilentlyContinue"
 try { $ProgressPreference = "SilentlyContinue" } catch { }
 
+# --- PowerShell 7 compatibility: Appx/DISM modules are Windows PowerShell only ---
+if ($PSVersionTable.PSVersion.Major -ge 7) {
+    try { Import-Module Appx -UseWindowsPowerShell -WarningAction SilentlyContinue -ErrorAction SilentlyContinue 2>$null } catch { }
+    try { Import-Module Dism -UseWindowsPowerShell -WarningAction SilentlyContinue -ErrorAction SilentlyContinue 2>$null } catch { }
+}
+
 # --- Глобальные настройки (сохраняются в config.json рядом со скриптом) ---
 $ScriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ConfigPath = Join-Path $ScriptDir "config.json"
@@ -86,6 +93,8 @@ $Global:Config = @{
     FirstRun     = $true
     AdvancedAccepted = $false
     AutoUpdateCheck = $true
+    UIMode       = ""       # Classic / Modern (empty = ask on start)
+    Recent       = @()       # recent actions for the Modern welcome panel
 }
 
 # --- Определение редакции и особенностей Windows ---
@@ -165,6 +174,7 @@ function Save-Config {
 
 function Write-Log {
     param([string]$Message)
+    Add-RecentActivity $Message
     if ($Global:Config.DebugLogs) {
         $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
         Add-Content -Path $LogPath -Value "[$timestamp] $Message" -Encoding UTF8
@@ -303,6 +313,7 @@ function L {
 # --- ASCII Art заголовок ---
 function Show-Header {
     param([string]$Title)
+    if ($Global:UIModern) { Show-HeaderModern -Title $Title; return }
     $color = Get-ThemeColor
     Clear-Host
     Write-Host ""
@@ -364,6 +375,7 @@ function Show-ArchSelect {
 # --- Главное меню ---
 function Show-MainMenu {
     while ($true) {
+        if ($Global:UIModern) { Show-MainMenuModern }
         Show-Header (L "MainMenuTitle")
         Write-Host ("  1. {0,-27} 5. {1}" -f (L "M1"), (L "M5"))
         Write-Host ("  2. {0,-27} 6. {1}" -f (L "M2"), (L "M6"))
@@ -413,6 +425,8 @@ function Show-SettingsMenu {
         Write-Host "  8. $(L 'S5'): $autoUpdMark"
         Write-Host "  9. $(L 'S9')"
         Write-Host "  V. $(L 'SV')"
+        $uiName = if ($Global:Config.UIMode -eq "Modern") { LM "NameModern" } else { LM "NameClassic" }
+        Write-Host "  U. $(LM 'UICurrent'): $uiName"
         Write-Host ""
         Write-Host "  0. $(L 'S0')"
         Write-Host ""
@@ -443,6 +457,7 @@ function Show-SettingsMenu {
             }
             "9" { Invoke-UpdateCheck -Manual $true }
             "V" { Show-CurrentVersionInfo }
+            "U" { Show-UIModeSelect; Initialize-UI -Splash $false }
             "0" { Save-Config; return }
             default {
                 Write-Host "  $(L 'InvalidChoice')" -ForegroundColor Red
@@ -1878,8 +1893,10 @@ function Show-PingTest {
             Write-Host "  Pinging $($target.Host)... / Пинг $($target.Host)..." -ForegroundColor DarkGray
             Write-Host ""
             $results = Test-Connection -ComputerName $target.Host -Count 10 -ErrorAction SilentlyContinue
-            if ($results) {
-                $times = $results | ForEach-Object { $_.ResponseTime }
+            # PS 5.1 returns only replies (ResponseTime); PS 7 returns all attempts with Status/Latency
+            $results = @($results | Where-Object { $_ -and (($null -eq $_.Status) -or ("$($_.Status)" -eq "Success") -or ("$($_.Status)" -eq "0")) })
+            if ($results.Count -gt 0) {
+                $times = $results | ForEach-Object { if ($null -ne $_.Latency) { $_.Latency } else { $_.ResponseTime } }
                 $avg = [math]::Round(($times | Measure-Object -Average).Average, 0)
                 $min = ($times | Measure-Object -Minimum).Minimum
                 $max = ($times | Measure-Object -Maximum).Maximum
@@ -3767,6 +3784,859 @@ function Show-CPSTest {
 }
 
 # =====================================================
+#  MODERN UI / СОВРЕМЕННЫЙ ИНТЕРФЕЙС
+#  Claude Code-style menu: PowerShell 7 + PwshSpectreConsole (optional)
+#  Everything here is only used when Config.UIMode = "Modern".
+#  NOTE: keep this block parseable by Windows PowerShell 5.1
+#  (no ??, no ?:, no && / ||, no `e escapes).
+# =====================================================
+$Global:UIModern = $false
+$Global:UI = @{
+    Esc     = [char]27
+    Info    = $null
+    Mascot  = $null
+    Spectre = $false
+    H       = "-"
+    V       = "|"
+    Arrow   = ">"
+    Sel     = @{ R = 0; C = 0 }
+    Grid    = @( @("1","5"), @("2","6"), @("3","7"), @("4","8"), @("9","0"), @("O",$null) )
+    GridX   = 4
+    GridY   = 0
+    CellW   = 40
+    InputX  = 2
+    InputY  = 0
+    HintW   = 60
+}
+
+# --- Mascot "Opti": a tiny microchip bot (own design, pixel art, 13x10) ---
+# B body, H highlight, P pins/legs, a antenna, E eyes, M mouth, S spark
+$Global:MascotArt = @(
+    "......S......",
+    "......a......",
+    "..HHHHHHHHH..",
+    "PBBBBBBBBBBBP",
+    ".BBEEBBBEEBB.",
+    "PBBEEBBBEEBBP",
+    ".BBBBBBBBBBB.",
+    "PBBBBMMMBBBBP",
+    "..BBBBBBBBB..",
+    "..P.P...P.P.."
+)
+
+# --- Modern UI strings ---
+$TM = @{
+    EN = @{
+        UITitle       = "INTERFACE"
+        UIPrompt      = "Choose the menu style:"
+        UIClassic     = "Standard menu   (classic, nothing extra to install)"
+        UIModern      = "Modern menu     (Claude Code style, animated)"
+        UIModernNote  = "The Modern menu needs PowerShell 7 and a small module (PwshSpectreConsole). They are downloaded automatically."
+        UIKeep        = "Press Enter for the Standard menu."
+        UICurrent     = "Interface"
+        NameClassic   = "Standard"
+        NameModern    = "Modern"
+        InstallPS7    = "PowerShell 7 is required for the Modern menu and is not installed. Download and install it now? (Y/N)"
+        DownloadingPS7 = "Downloading PowerShell 7 from GitHub (no winget needed)..."
+        InstallingPS7 = "Installing PowerShell 7 (about a minute)..."
+        OpeningWT     = "Opening in Windows Terminal..."
+        InstallFail   = "PowerShell 7 could not be installed."
+        BackToClassic = "Staying on the Standard menu. You can switch any time: Settings -> U."
+        InstallingMod = "Downloading PwshSpectreConsole (one-time)..."
+        Welcome       = "Welcome back, {0}!"
+        RecentTitle   = "Recent activity"
+        NoRecent      = "No recent activity yet"
+        NewTitle      = "What's new"
+        New1          = "New Modern menu (Settings -> U)"
+        New2          = "Arrow keys, hotkeys, live mascot"
+        New3          = "Switch to Standard any time"
+        MoreHint      = "... Settings (9) for more"
+        AgoNow        = "now"
+        AgoMin        = "{0}m ago"
+        AgoHour       = "{0}h ago"
+        AgoDay        = "{0}d ago"
+        Loading       = "Warming up..."
+        Ready         = "Ready"
+        Footer        = "arrows move  |  Enter select  |  hotkeys 1-9, O  |  0 exit"
+        Bye           = "See you! Stay optimized."
+        Admin         = "Admin"
+        User          = "User"
+        Hint1         = "Press 5 to see your system info"
+        Hint2         = "Press 1 to tune performance and power"
+        Hint3         = "Press 8 to remove bloatware"
+        Hint4         = "Press 9 for settings - you can switch back to Standard there"
+        Hint5         = "Press O for extra tools"
+    }
+    RU = @{
+        UITitle       = "ИНТЕРФЕЙС"
+        UIPrompt      = "Выберите стиль меню:"
+        UIClassic     = "Стандартное меню   (классическое, ничего ставить не нужно)"
+        UIModern      = "Новое меню         (стиль Claude Code, с анимациями)"
+        UIModernNote  = "Новому меню нужен PowerShell 7 и небольшой модуль (PwshSpectreConsole). Они скачаются автоматически."
+        UIKeep        = "Нажмите Enter для стандартного меню."
+        UICurrent     = "Интерфейс"
+        NameClassic   = "Стандартный"
+        NameModern    = "Новый"
+        InstallPS7    = "Для нового меню нужен PowerShell 7, он не установлен. Скачать и установить сейчас? (Y/N)"
+        DownloadingPS7 = "Скачивание PowerShell 7 с GitHub (winget не нужен)..."
+        InstallingPS7 = "Установка PowerShell 7 (около минуты)..."
+        OpeningWT     = "Открываю в Windows Terminal..."
+        InstallFail   = "Не удалось установить PowerShell 7."
+        BackToClassic = "Остаёмся на стандартном меню. Переключить можно в любой момент: Настройки -> U."
+        InstallingMod = "Скачивание PwshSpectreConsole (один раз)..."
+        Welcome       = "С возвращением, {0}!"
+        RecentTitle   = "Недавние действия"
+        NoRecent      = "Пока нет действий"
+        NewTitle      = "Что нового"
+        New1          = "Новое меню (Настройки -> U)"
+        New2          = "Стрелки, горячие клавиши, маскот"
+        New3          = "Вернуться к стандартному можно всегда"
+        MoreHint      = "... Настройки (9) для большего"
+        AgoNow        = "сейчас"
+        AgoMin        = "{0}м назад"
+        AgoHour       = "{0}ч назад"
+        AgoDay        = "{0}д назад"
+        Loading       = "Прогреваемся..."
+        Ready         = "Готово"
+        Footer        = "стрелки - выбор  |  Enter - открыть  |  клавиши 1-9, O  |  0 - выход"
+        Bye           = "До встречи! Оптимизируйтесь."
+        Admin         = "Админ"
+        User          = "Пользователь"
+        Hint1         = "Нажмите 5, чтобы увидеть инфо о системе"
+        Hint2         = "Нажмите 1 для быстродействия и питания"
+        Hint3         = "Нажмите 8, чтобы удалить bloatware"
+        Hint4         = "Нажмите 9 для настроек - там можно вернуть стандартное меню"
+        Hint5         = "Нажмите O для доп. функций"
+    }
+}
+
+function LM {
+    param([string]$Key)
+    $lang = $Global:Config.Language
+    if (-not $TM.ContainsKey($lang)) { $lang = "EN" }
+    $v = $TM[$lang][$Key]
+    if ($null -eq $v) { $v = $TM["EN"][$Key] }
+    return $v
+}
+
+# ---------- ANSI helpers ----------
+function Get-AnsiFg { param([int[]]$C) return "$($Global:UI.Esc)[38;2;$($C[0]);$($C[1]);$($C[2])m" }
+function Get-AnsiBg { param([int[]]$C) return "$($Global:UI.Esc)[48;2;$($C[0]);$($C[1]);$($C[2])m" }
+function Get-AnsiReset { return "$($Global:UI.Esc)[0m" }
+function Get-AnsiBgOff { return "$($Global:UI.Esc)[49m" }
+function Get-AnsiBold { return "$($Global:UI.Esc)[1m" }
+
+function Get-ScaledColor {
+    param([int[]]$C, [double]$Factor)
+    $out = @()
+    foreach ($v in $C) {
+        $n = [int][Math]::Round($v * $Factor)
+        if ($n -gt 255) { $n = 255 }
+        if ($n -lt 0) { $n = 0 }
+        $out += $n
+    }
+    return $out
+}
+
+# Accent color follows the existing "Menu color" setting
+function Get-UIAccent {
+    switch ($Global:Config.Color) {
+        "Green"  { return @(74,222,128) }
+        "Cyan"   { return @(34,211,238) }
+        "Yellow" { return @(250,204,21) }
+        "White"  { return @(229,231,235) }
+        default  { return @(217,119,87) }
+    }
+}
+
+function Get-VisLen {
+    param([string]$S)
+    return ([regex]::Replace($S, "\x1b\[[0-9;]*m", "")).Length
+}
+
+function Format-UICell {
+    param([string]$S, [int]$Width, [string]$Align = "Left")
+    $pad = $Width - (Get-VisLen $S)
+    if ($pad -lt 0) { $pad = 0 }
+    if ($Align -eq "Center") {
+        $l = [int][Math]::Floor($pad / 2)
+        return (" " * $l) + $S + (" " * ($pad - $l))
+    }
+    return $S + (" " * $pad)
+}
+
+function Limit-Text {
+    param([string]$S, [int]$Max)
+    if ($Max -lt 1) { return "" }
+    if ($S.Length -le $Max) { return $S }
+    if ($Max -eq 1) { return $S.Substring(0, 1) }
+    return $S.Substring(0, $Max - 1) + "…"
+}
+
+function Get-UILayout {
+    $w = 100
+    $h = 30
+    try { $w = [Console]::WindowWidth; $h = [Console]::WindowHeight } catch { }
+    $pw = [Math]::Min(100, $w - 3)
+    if ($pw -lt 40) { $pw = 40 }
+    return @{ PanelW = $pw; WinW = $w; WinH = $h; Wide = ($pw -ge 74); Tall = ($h -ge 27) }
+}
+
+# ---------- Mascot ----------
+function Get-MascotLines {
+    param([bool]$Blink = $false, [bool]$Spark = $false, [bool]$Legs = $false)
+    $acc = Get-UIAccent
+    $dark = Get-ScaledColor $acc 0.55
+    $hi = Get-ScaledColor $acc 1.18
+    $eye = @(24,24,27)
+    $sparkC = @(255,214,77)
+    if ($Spark) { $sparkC = @(255,255,255) }
+    $rows = $Global:MascotArt.Clone()
+    if ($Blink) { $rows[4] = ".BBBBBBBBBBB." }
+    if ($Legs)  { $rows[9] = ".P.P.....P.P." }
+    $map = @{ "B" = $acc; "H" = $hi; "P" = $dark; "a" = $dark; "E" = $eye; "M" = $eye; "S" = $sparkC }
+    $esc = $Global:UI.Esc
+    $out = @()
+    for ($y = 0; $y -lt $rows.Count; $y += 2) {
+        $top = $rows[$y]
+        $bot = $rows[$y + 1]
+        $sb = New-Object System.Text.StringBuilder
+        for ($x = 0; $x -lt $top.Length; $x++) {
+            $tc = $map[$top[$x].ToString()]
+            $bc = $map[$bot[$x].ToString()]
+            if ($tc -and $bc) {
+                if (($tc -join ",") -eq ($bc -join ",")) {
+                    [void]$sb.Append((Get-AnsiFg $tc)).Append([string][char]0x2588)
+                } else {
+                    [void]$sb.Append((Get-AnsiFg $tc)).Append((Get-AnsiBg $bc)).Append([string][char]0x2580).Append((Get-AnsiBgOff))
+                }
+            } elseif ($tc) {
+                [void]$sb.Append((Get-AnsiFg $tc)).Append([string][char]0x2580)
+            } elseif ($bc) {
+                [void]$sb.Append((Get-AnsiFg $bc)).Append([string][char]0x2584)
+            } else {
+                [void]$sb.Append(" ")
+            }
+        }
+        [void]$sb.Append((Get-AnsiReset))
+        $out += $sb.ToString()
+    }
+    return $out
+}
+
+function Update-UIMascot {
+    param([bool]$Blink, [bool]$Spark, [bool]$Legs)
+    $m = $Global:UI.Mascot
+    if (-not $m) { return }
+    try {
+        $lines = Get-MascotLines -Blink $Blink -Spark $Spark -Legs $Legs
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            [Console]::SetCursorPosition($m.X, $m.Y + $i)
+            [Console]::Write($lines[$i])
+        }
+    } catch { $Global:UI.Mascot = $null }
+}
+
+# ---------- Data for the welcome panel ----------
+function Get-UIInfo {
+    if ($Global:UI.Info) { return $Global:UI.Info }
+    $os = ""
+    $ver = ""
+    $ram = ""
+    try {
+        $ed = Get-WindowsEditionInfo
+        $os = ("" + $ed.Caption) -replace '^Microsoft\s+', ''
+        $ver = "" + $ed.DisplayVersion
+    } catch { }
+    try {
+        $mem = (Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue).TotalPhysicalMemory
+        if ($mem) { $ram = ("{0} GB" -f [math]::Round($mem / 1GB)) }
+    } catch { }
+    $admin = $false
+    try {
+        $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    } catch { }
+    $Global:UI.Info = @{ OS = $os; Ver = $ver; Ram = $ram; Admin = $admin }
+    return $Global:UI.Info
+}
+
+function Add-RecentActivity {
+    param([string]$Message)
+    if ($Message -match '^(Main menu choice|Session started|Language selected|Architecture selected|Auto-update|Debug logs|UI mode)') { return }
+    try {
+        $list = @($Global:Config.Recent | Where-Object { $_ })
+        $entry = ([DateTime]::UtcNow.ToString("s")) + "|" + $Message
+        $list = @($entry) + $list
+        if ($list.Count -gt 8) { $list = $list[0..7] }
+        $Global:Config.Recent = $list
+    } catch { }
+}
+
+function Format-UIAgo {
+    param([TimeSpan]$Span)
+    if ($Span.TotalMinutes -lt 1) { return (LM "AgoNow") }
+    if ($Span.TotalMinutes -lt 60) { return ((LM "AgoMin") -f [int][Math]::Floor($Span.TotalMinutes)) }
+    if ($Span.TotalHours -lt 24) { return ((LM "AgoHour") -f [int][Math]::Floor($Span.TotalHours)) }
+    return ((LM "AgoDay") -f [int][Math]::Floor($Span.TotalDays))
+}
+
+function Get-UIRecent {
+    param([int]$Count, [int]$Width)
+    $out = @()
+    $items = @($Global:Config.Recent | Where-Object { $_ })
+    $gray = Get-AnsiFg @(150,150,158)
+    $white = Get-AnsiFg @(236,236,240)
+    $rs = Get-AnsiReset
+    foreach ($e in $items) {
+        if ($out.Count -ge $Count) { break }
+        $s = [string]$e
+        $idx = $s.IndexOf("|")
+        if ($idx -lt 1) { continue }
+        $stamp = $s.Substring(0, $idx)
+        $msg = $s.Substring($idx + 1)
+        $ago = ""
+        try {
+            $dt = [DateTime]::ParseExact($stamp, "s", [Globalization.CultureInfo]::InvariantCulture)
+            $ago = Format-UIAgo ([DateTime]::UtcNow - $dt)
+        } catch { }
+        $out += ($gray + $ago.PadRight(10) + $rs + $white + (Limit-Text $msg ($Width - 10)) + $rs)
+    }
+    return $out
+}
+
+function Get-UIHints {
+    return @((LM "Hint1"), (LM "Hint2"), (LM "Hint3"), (LM "Hint4"), (LM "Hint5"))
+}
+
+function Get-MenuLabel {
+    param([string]$Key)
+    switch ($Key) {
+        "1" { return (L "M1") }
+        "2" { return (L "M2") }
+        "3" { return (L "M3") }
+        "4" { return (L "M4") }
+        "5" { return (L "M5") }
+        "6" { return (L "M6") }
+        "7" { return (L "M7") }
+        "8" { return (L "M8") }
+        "9" { return (L "M9") }
+        "0" { return (L "M0") }
+        "O" { return (L "MOther") }
+    }
+    return ""
+}
+
+# ---------- Rendering ----------
+function Write-UICell {
+    param([int]$R, [int]$C, [bool]$Selected)
+    $ui = $Global:UI
+    $key = $ui.Grid[$R][$C]
+    if (-not $key) { return }
+    $label = Limit-Text (Get-MenuLabel $key) ($ui.CellW - 7)
+    $fa = Get-AnsiFg (Get-UIAccent)
+    $rs = Get-AnsiReset
+    $text = ""
+    if ($Selected) {
+        $text = (Get-AnsiBold) + $fa + $ui.Arrow + " " + $key + "  " + $label + $rs
+    } else {
+        $text = "  " + $fa + $key + $rs + "  " + (Get-AnsiFg @(214,214,220)) + $label + $rs
+    }
+    $text = Format-UICell $text ($ui.CellW - 1)
+    try {
+        [Console]::SetCursorPosition($ui.GridX + ($C * $ui.CellW), $ui.GridY + $R)
+        [Console]::Write($text)
+    } catch { }
+}
+
+function Write-UIHint {
+    param([string]$Text, [int]$N)
+    $ui = $Global:UI
+    $shown = ""
+    if ($N -gt 0) { $shown = $Text.Substring(0, [Math]::Min($N, $Text.Length)) }
+    $shown = $shown.PadRight($ui.HintW)
+    $fa = Get-AnsiFg (Get-UIAccent)
+    try {
+        [Console]::SetCursorPosition($ui.InputX, $ui.InputY)
+        [Console]::Write($fa + $ui.Arrow + (Get-AnsiReset) + " " + (Get-AnsiFg @(120,120,128)) + $shown + (Get-AnsiReset))
+    } catch { }
+}
+
+function Show-ModernScreen {
+    param([bool]$Cascade = $false)
+    $ui = $Global:UI
+    $lay = Get-UILayout
+    $acc = Get-UIAccent
+    $fa = Get-AnsiFg $acc
+    $fd = Get-AnsiFg (Get-ScaledColor $acc 0.6)
+    $gray = Get-AnsiFg @(150,150,158)
+    $white = Get-AnsiFg @(236,236,240)
+    $rs = Get-AnsiReset
+    $bold = Get-AnsiBold
+    $H = $ui.H
+    $V = $ui.V
+    $W = $lay.PanelW
+    $inner = $W - 2
+    $info = Get-UIInfo
+    $user = $env:USERNAME
+    $delay = 0
+    if ($Cascade) { $delay = 18 }
+
+    Clear-Host
+    try { [Console]::CursorVisible = $false } catch { }
+    Write-Host ""
+
+    $ui.Mascot = $null
+    $title = " OptiTool v$($Global:AppVersion) "
+    $fill = $inner - 3 - $title.Length
+    if ($fill -lt 1) { $fill = 1 }
+    $panelTop = 0
+    try { $panelTop = [Console]::CursorTop } catch { }
+    Write-Host ("  " + $fa + "╭" + ($H * 3) + $bold + $title + $rs + $fa + ($H * $fill) + "╮" + $rs)
+    if ($delay -gt 0) { Start-Sleep -Milliseconds $delay }
+
+    # system lines
+    $os1 = $info.OS
+    if ($info.Ver) { $os1 = $os1 + " · " + $info.Ver }
+    $archTxt = ""
+    if ($Global:Config.Architecture -match '^(32|64)$') { $archTxt = $Global:Config.Architecture + "-bit" }
+    elseif ([Environment]::Is64BitOperatingSystem) { $archTxt = "64-bit" }
+    else { $archTxt = "32-bit" }
+    $role = LM "User"
+    if ($info.Admin) { $role = LM "Admin" }
+    $os2 = $archTxt
+    if ($info.Ram) { $os2 = $os2 + " · " + $info.Ram }
+    $os2 = $os2 + " · " + $role
+
+    if ($lay.Wide -and $lay.Tall) {
+        $LW = [int][Math]::Floor(($inner - 1) * 0.42)
+        $RW = $inner - 1 - $LW
+
+        $left = @()
+        $welcome = Limit-Text ((LM "Welcome") -f $user) ($LW - 2)
+        $left += (Format-UICell ($bold + $white + $welcome + $rs) $LW "Center")
+        $left += (Format-UICell "" $LW)
+        foreach ($m in (Get-MascotLines)) { $left += (Format-UICell $m $LW "Center") }
+        $left += (Format-UICell "" $LW)
+        $left += (Format-UICell ($gray + (Limit-Text $os1 ($LW - 2)) + $rs) $LW "Center")
+        $left += (Format-UICell ($gray + (Limit-Text $os2 ($LW - 2)) + $rs) $LW "Center")
+
+        $right = @()
+        $right += ($bold + $fa + (LM "RecentTitle") + $rs)
+        $recent = @(Get-UIRecent 3 ($RW - 2))
+        if ($recent.Count -eq 0) {
+            $right += ($gray + (LM "NoRecent") + $rs)
+            $right += ""
+            $right += ""
+        } else {
+            for ($i = 0; $i -lt 3; $i++) {
+                if ($i -lt $recent.Count) { $right += $recent[$i] } else { $right += "" }
+            }
+        }
+        $right += "__DIV__"
+        $right += ($bold + $fa + (LM "NewTitle") + $rs)
+        $right += ($white + (Limit-Text (LM "New1") ($RW - 2)) + $rs)
+        $right += ($white + (Limit-Text (LM "New2") ($RW - 2)) + $rs)
+        $right += ($white + (Limit-Text (LM "New3") ($RW - 2)) + $rs)
+        $right += ($gray + (Limit-Text (LM "MoreHint") ($RW - 2)) + $rs)
+
+        for ($i = 0; $i -lt 10; $i++) {
+            if ($right[$i] -eq "__DIV__") {
+                $rcell = $fd + ($H * $RW) + $rs
+            } else {
+                $rcell = Format-UICell (" " + $right[$i]) $RW
+            }
+            Write-Host ("  " + $fa + $V + $rs + $left[$i] + $fa + $V + $rs + $rcell + $fa + $V + $rs)
+            if ($delay -gt 0) { Start-Sleep -Milliseconds $delay }
+        }
+        if ($panelTop -gt 0) {
+            $ui.Mascot = @{ X = 3 + [int][Math]::Floor(($LW - 13) / 2); Y = $panelTop + 3 }
+        }
+    } else {
+        $line = Limit-Text (((LM "Welcome") -f $user) + "  " + $os1) ($inner - 4)
+        $cell = Format-UICell (" " + $fa + "◆ " + $rs + $white + $line + $rs) $inner
+        Write-Host ("  " + $fa + $V + $rs + $cell + $fa + $V + $rs)
+    }
+
+    Write-Host ("  " + $fa + "╰" + ($H * $inner) + "╯" + $rs)
+    Write-Host ""
+
+    # menu grid
+    $ui.GridX = 4
+    $ui.CellW = [int][Math]::Floor(($W - 2) / 2)
+    try { $ui.GridY = [Console]::CursorTop } catch { }
+    for ($r = 0; $r -lt 6; $r++) { Write-Host "" }
+    Write-Host ""
+
+    # input box + footer
+    Write-Host ("  " + $fd + ($H * $W) + $rs)
+    try { $ui.InputY = [Console]::CursorTop } catch { }
+    $ui.InputX = 2
+    $ui.HintW = $W - 4
+    Write-Host ("  " + $fa + $ui.Arrow + $rs + " ")
+    Write-Host ("  " + $fd + ($H * $W) + $rs)
+    Write-Host ("  " + $gray + (Limit-Text (LM "Footer") $W) + $rs)
+
+    for ($r = 0; $r -lt 6; $r++) {
+        for ($c = 0; $c -lt 2; $c++) {
+            Write-UICell $r $c (($r -eq $ui.Sel.R) -and ($c -eq $ui.Sel.C))
+        }
+    }
+}
+
+function Move-UISel {
+    param([int]$DR, [int]$DC)
+    $ui = $Global:UI
+    $r = $ui.Sel.R
+    $c = $ui.Sel.C
+    $oldR = $r
+    $oldC = $c
+    if ($DC -ne 0) {
+        $nc = 1 - $c
+        if ($ui.Grid[$r][$nc]) { $c = $nc }
+    }
+    if ($DR -ne 0) {
+        for ($i = 0; $i -lt 6; $i++) {
+            $r = ($r + $DR + 6) % 6
+            if ($ui.Grid[$r][$c]) { break }
+        }
+    }
+    if (($r -ne $oldR) -or ($c -ne $oldC)) {
+        $ui.Sel.R = $r
+        $ui.Sel.C = $c
+        Write-UICell $oldR $oldC $false
+        Write-UICell $r $c $true
+    }
+}
+
+# Waits for a key; animates the mascot and the typing hint while idle
+function Read-ModernMenuKey {
+    $ui = $Global:UI
+    $tick = 0
+    $hints = Get-UIHints
+    $hintIdx = 0
+    $hintTick = 0
+    $lastN = -1
+    $lastState = ""
+    while ($true) {
+        while (-not [Console]::KeyAvailable) {
+            $tick++
+            if ($ui.Mascot) {
+                $blink = (($tick % 46) -ge 42)
+                $spark = ((([int][Math]::Floor($tick / 4)) % 2) -eq 1)
+                $legs  = ((($tick % 80) -ge 60) -and ((([int][Math]::Floor($tick / 3)) % 2) -eq 0))
+                $state = "$blink|$spark|$legs"
+                if ($state -ne $lastState) {
+                    $lastState = $state
+                    Update-UIMascot $blink $spark $legs
+                }
+            }
+            $text = Limit-Text $hints[$hintIdx % $hints.Count] $ui.HintW
+            $n = [Math]::Min($text.Length, $hintTick * 2)
+            if ($n -ne $lastN) {
+                $lastN = $n
+                Write-UIHint $text $n
+            }
+            $hintTick++
+            if ($hintTick -gt (($text.Length / 2) + 45)) {
+                $hintIdx++
+                $hintTick = 0
+                $lastN = -1
+            }
+            Start-Sleep -Milliseconds 100
+        }
+        $k = [Console]::ReadKey($true)
+        switch ($k.Key) {
+            "UpArrow"    { Move-UISel -1 0 }
+            "DownArrow"  { Move-UISel 1 0 }
+            "LeftArrow"  { Move-UISel 0 -1 }
+            "RightArrow" { Move-UISel 0 1 }
+            "Enter"      { return $ui.Grid[$ui.Sel.R][$ui.Sel.C] }
+            default {
+                $ch = $k.KeyChar.ToString().ToUpper()
+                if ($ch -match '^[0-9O]$') { return $ch }
+            }
+        }
+    }
+}
+
+function Show-MainMenuModern {
+    $first = $true
+    try {
+        while ($true) {
+            Show-ModernScreen -Cascade $first
+            $first = $false
+            $choice = Read-ModernMenuKey
+            try { [Console]::CursorVisible = $true } catch { }
+            Write-Log "Main menu choice: $choice"
+            switch ($choice) {
+                "1" { Show-PerformanceMenu }
+                "2" { Show-StartupMenu }
+                "3" { Show-DiskMenu }
+                "4" { Show-PrivacyMenu }
+                "5" { Show-SystemInfo }
+                "6" { Show-ExportReport }
+                "7" { Show-NetworkMenu }
+                "8" { Show-BloatwareMenu }
+                "9" { Show-SettingsMenu }
+                "O" { Show-OtherMenu }
+                "0" {
+                    Save-Config
+                    Clear-Host
+                    Write-Host ""
+                    Write-Host ("  " + (Get-AnsiFg (Get-UIAccent)) + "◆ " + (LM "Bye") + (Get-AnsiReset))
+                    Write-Host ""
+                    exit
+                }
+            }
+            Save-Config
+            # the UI may have been switched to Standard from Settings
+            if (-not $Global:UIModern) { return }
+        }
+    } finally {
+        try { [Console]::CursorVisible = $true } catch { }
+    }
+}
+
+# Compact header used by every sub-menu while the Modern UI is active
+function Show-HeaderModern {
+    param([string]$Title)
+    $lay = Get-UILayout
+    $acc = Get-UIAccent
+    $fa = Get-AnsiFg $acc
+    $rs = Get-AnsiReset
+    $bold = Get-AnsiBold
+    $H = $Global:UI.H
+    $V = $Global:UI.V
+    $W = [Math]::Min(78, $lay.PanelW)
+    $inner = $W - 2
+    $name = " OptiTool v$($Global:AppVersion) "
+    $fill = $inner - 3 - $name.Length
+    if ($fill -lt 1) { $fill = 1 }
+    $t = Limit-Text $Title.ToUpper() ($inner - 5)
+    Clear-Host
+    Write-Host ""
+    Write-Host ("  " + $fa + "╭" + ($H * 3) + $bold + $name + $rs + $fa + ($H * $fill) + "╮" + $rs)
+    Write-Host ("  " + $fa + $V + $rs + (Format-UICell (" " + $fa + "◆ " + $rs + $bold + $t + $rs) $inner) + $fa + $V + $rs)
+    Write-Host ("  " + $fa + "╰" + ($H * $inner) + "╯" + $rs)
+    Write-Host ""
+}
+
+# ---------- Splash ----------
+function Show-ModernSplash {
+    $acc = Get-UIAccent
+    $fa = Get-AnsiFg $acc
+    $gray = Get-AnsiFg @(150,150,158)
+    $rs = Get-AnsiReset
+    Clear-Host
+    try { [Console]::CursorVisible = $false } catch { }
+    Write-Host ""
+    foreach ($ln in (Get-MascotLines)) {
+        Write-Host ("    " + $ln)
+        Start-Sleep -Milliseconds 40
+    }
+    Write-Host ""
+
+    $col = $null
+    $titled = $false
+    if ($Global:UI.Spectre) {
+        try {
+            $col = [Spectre.Console.Color]::new([byte]$acc[0], [byte]$acc[1], [byte]$acc[2])
+            Write-SpectreFigletText -Text "OptiTool" -Color $col
+            $titled = $true
+        } catch { }
+    }
+    if (-not $titled) {
+        Write-Host ("  " + (Get-AnsiBold) + $fa + "O P T I T O O L" + $rs)
+    }
+    Write-Host ("  " + $gray + "Optimization Tool · v$($Global:AppVersion) · github.com/ghostsmash" + $rs)
+    Write-Host ""
+
+    $done = $false
+    if ($Global:UI.Spectre -and $col) {
+        try {
+            Invoke-SpectreCommandWithStatus -Title (LM "Loading") -Spinner Dots -Color $col -ScriptBlock {
+                Get-UIInfo | Out-Null
+                Start-Sleep -Milliseconds 800
+            }
+            $done = $true
+        } catch { }
+    }
+    if (-not $done) {
+        Write-Host ("  " + $fa + "◐ " + $rs + (LM "Loading"))
+        Get-UIInfo | Out-Null
+        Start-Sleep -Milliseconds 600
+    }
+    try { [Console]::CursorVisible = $true } catch { }
+}
+
+# ---------- Runtime: PowerShell 7 + PwshSpectreConsole ----------
+function Find-Pwsh {
+    if ($PSVersionTable.PSVersion.Major -ge 7) {
+        $self = Join-Path $PSHOME "pwsh.exe"
+        if (Test-Path $self) { return $self }
+    }
+    $cmd = Get-Command pwsh.exe -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+    $p = Join-Path $env:ProgramFiles "PowerShell\7\pwsh.exe"
+    if (Test-Path $p) { return $p }
+    return $null
+}
+
+function Install-Pwsh {
+    # 1) winget, if the system has it
+    $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
+    if ($winget) {
+        Write-Host "  winget: Microsoft.PowerShell..." -ForegroundColor DarkGray
+        & winget install --id Microsoft.PowerShell -e --source winget --accept-package-agreements --accept-source-agreements
+        $p = Find-Pwsh
+        if ($p) { return $p }
+    }
+    # 2) no winget (LTSC, old Win10 builds) or it failed: official MSI from GitHub releases
+    try {
+        try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch { }
+        Write-Host "  $(LM 'DownloadingPS7')" -ForegroundColor DarkGray
+        $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/PowerShell/PowerShell/releases/latest" -Headers @{ "User-Agent" = "OptiTool" } -TimeoutSec 20 -ErrorAction Stop
+        $arch = "win-x86"
+        if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { $arch = "win-arm64" }
+        elseif ([Environment]::Is64BitOperatingSystem) { $arch = "win-x64" }
+        $asset = $rel.assets | Where-Object { $_.name -like "*-$arch.msi" } | Select-Object -First 1
+        if ($asset) {
+            $msi = Join-Path $env:TEMP $asset.name
+            Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $msi -UseBasicParsing -ErrorAction Stop
+            Write-Host "  $(LM 'InstallingPS7')" -ForegroundColor DarkGray
+            $proc = Start-Process -FilePath "msiexec.exe" -ArgumentList "/i `"$msi`" /qn /norestart ADD_PATH=1 REGISTER_MANIFEST=1 ENABLE_MU=0 USE_MU=0" -Wait -PassThru
+            Remove-Item $msi -Force -ErrorAction SilentlyContinue
+            Write-Log "PowerShell 7 MSI install exit code: $($proc.ExitCode)"
+        }
+    } catch { }
+    return (Find-Pwsh)
+}
+
+# Windows Terminal (wt.exe, e.g. from the Microsoft Store). $null if missing or already inside it.
+function Find-WindowsTerminal {
+    if ($env:WT_SESSION) { return $null }
+    $cmd = Get-Command wt.exe -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+    $p = Join-Path $env:LOCALAPPDATA "Microsoft\WindowsApps\wt.exe"
+    if (Test-Path $p) { return $p }
+    return $null
+}
+
+# Re-runs this script under PowerShell 7, inside Windows Terminal when it is installed.
+# Returns $true  -> keep running in the current window (already PS7, no Windows Terminal possible)
+# Returns $false -> Modern UI is not possible, stay on the Standard menu
+# Otherwise relaunches and exits (never returns).
+function Switch-ToModernHost {
+    $pwsh = Find-Pwsh
+    if (-not $pwsh) {
+        Show-Header (LM "UITitle")
+        Write-Host "  $(LM 'InstallPS7')"
+        Write-Host ""
+        $a = Read-Host "  Y / N"
+        if ($a.ToUpper() -ne "Y") {
+            $Global:Config.UIMode = "Classic"
+            Save-Config
+            Write-Host ""
+            Write-Host "  $(LM 'BackToClassic')" -ForegroundColor Yellow
+            Start-Sleep -Seconds 2
+            return $false
+        }
+        $pwsh = Install-Pwsh
+        if (-not $pwsh) {
+            $Global:Config.UIMode = "Classic"
+            Save-Config
+            Write-Host ""
+            Write-Host "  $(LM 'InstallFail')" -ForegroundColor Red
+            Write-Host "  $(LM 'BackToClassic')" -ForegroundColor Yellow
+            Start-Sleep -Seconds 3
+            return $false
+        }
+    }
+    Save-Config
+
+    # Prefer Windows Terminal: better fonts, box drawing and colors than the old console window
+    $wt = Find-WindowsTerminal
+    if ($wt) {
+        try {
+            Write-Host "  $(LM 'OpeningWT')" -ForegroundColor DarkGray
+            $argLine = "new-tab --startingDirectory `"$ScriptDir`" `"$pwsh`" -NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`""
+            Start-Process -FilePath $wt -ArgumentList $argLine -ErrorAction Stop
+            Start-Sleep -Milliseconds 800
+            exit 77     # start.bat closes its own window on this code
+        } catch { }
+    }
+
+    if ($PSVersionTable.PSVersion.Major -ge 7) { return $true }
+    & $pwsh -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath
+    exit
+}
+
+function Initialize-ModernRuntime {
+    try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
+    if ($env:WT_SESSION) {
+        # Windows Terminal (Cascadia) has the full box-drawing set
+        $Global:UI.H = "╌"
+        $Global:UI.V = "╎"
+        $Global:UI.Arrow = "❯"
+    } else {
+        $Global:UI.H = "─"
+        $Global:UI.V = "│"
+        $Global:UI.Arrow = ">"
+    }
+    $Global:UI.Spectre = $false
+    try {
+        if (-not (Get-Module -ListAvailable -Name PwshSpectreConsole)) {
+            Write-Host "  $(LM 'InstallingMod')" -ForegroundColor DarkGray
+            try { Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Scope CurrentUser -Force -ErrorAction SilentlyContinue | Out-Null } catch { }
+            try {
+                Install-Module -Name PwshSpectreConsole -Scope CurrentUser -Force -AcceptLicense -Repository PSGallery -ErrorAction Stop
+            } catch { }
+        }
+        if (Get-Module -ListAvailable -Name PwshSpectreConsole) {
+            Import-Module PwshSpectreConsole -ErrorAction Stop
+            $Global:UI.Spectre = $true
+        }
+    } catch { }
+}
+
+# Applies Config.UIMode. Relaunches under PowerShell 7 if needed.
+function Initialize-UI {
+    param([bool]$Splash = $true)
+    $Global:UIModern = $false
+    if ($Global:Config.UIMode -ne "Modern") { return }
+    if (($PSVersionTable.PSVersion.Major -lt 7) -or (Find-WindowsTerminal)) {
+        if (-not (Switch-ToModernHost)) { return }
+    }
+    Initialize-ModernRuntime
+    $Global:UIModern = $true
+    if ($Splash) { Show-ModernSplash }
+}
+
+# ---------- Interface selection (start screen + Settings -> U) ----------
+function Set-UIMode {
+    param([string]$Mode)
+    $Global:Config.UIMode = $Mode
+    # first time on Modern: switch the untouched default color to the warm accent
+    if ($Mode -eq "Modern" -and $Global:Config.Color -eq "Green") { $Global:Config.Color = "Orange" }
+    Save-Config
+}
+
+function Show-UIModeSelect {
+    Show-Header (LM "UITitle")
+    Write-Host "  $(LM 'UIPrompt')"
+    Write-Host ""
+    Write-Host "  1. $(LM 'UIClassic')"
+    Write-Host "  2. $(LM 'UIModern')"
+    Write-Host ""
+    Write-Host "  $(LM 'UIModernNote')" -ForegroundColor DarkGray
+    Write-Host "  $(LM 'UIKeep')" -ForegroundColor DarkGray
+    Write-Host ""
+    $choice = Read-Host "  >"
+    if ($choice -eq "2") { Set-UIMode "Modern" } else { Set-UIMode "Classic" }
+    Write-Log "UI mode set to $($Global:Config.UIMode)"
+}
+
+# =====================================================
 #  ТОЧКА ВХОДА
 # =====================================================
 Load-Config
@@ -3778,6 +4648,10 @@ if ($Global:Config.FirstRun) {
     $Global:Config.FirstRun = $false
     Save-Config
 }
+
+# --- Interface choice (asked once; later via Settings -> U) ---
+if (-not $Global:Config.UIMode) { Show-UIModeSelect }
+Initialize-UI
 
 Write-Log "Session started"
 Invoke-UpdateCheck -Manual $false
